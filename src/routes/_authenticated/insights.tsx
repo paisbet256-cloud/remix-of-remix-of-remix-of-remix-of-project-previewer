@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from "recharts";
+import CandlestickChart from "@/components/CandlestickChart";
 import { BarChart3, Download } from "lucide-react";
 import { toCsv, downloadCsv } from "@/lib/csv";
 
