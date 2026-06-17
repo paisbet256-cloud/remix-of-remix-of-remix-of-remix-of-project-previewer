@@ -359,14 +359,18 @@ function AddPartnerPage() {
                 <input
                   value={accountSearch}
                   onChange={(e) => setAccountSearch(e.target.value)}
-                  placeholder="Search ad accounts by name…"
+                  placeholder="Search by ad set, campaign or account name…"
                   className="w-full rounded-lg bg-surface border border-border pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <div className="relative">
                 <select value={accountStatus} onChange={(e) => setAccountStatus(e.target.value)} className="appearance-none rounded-lg bg-surface border border-border pl-3 pr-9 py-2 text-sm">
                   <option value="all">All Statuses</option>
-                  <option value="active">Active</option>
+                  <option value="ACTIVE">Active</option>
+                  <option value="PAUSED">Paused</option>
+                  <option value="ADSET_PAUSED">Ad set paused</option>
+                  <option value="CAMPAIGN_PAUSED">Campaign paused</option>
+                  <option value="ARCHIVED">Archived</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
               </div>
