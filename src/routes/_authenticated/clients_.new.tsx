@@ -38,15 +38,27 @@ function AddPartnerPage() {
   const [commissionPct, setCommissionPct] = useState<string>("");
   const [commissionNotes, setCommissionNotes] = useState("");
 
-  // Campaign assignment
+  // Campaign assignment — now ad-set level
+  type AdSetRow = {
+    id: string; name: string; status: string;
+    campaign_id: string; campaign_name: string;
+    account_id: string; account_name: string;
+    currency: string | null; thumbnail_url: string | null;
+    internal_campaign_id: string | null;
+    assignedClientName: string | null; assignedClientSlug: string | null;
+  };
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [adsets, setAdsets] = useState<AdSetRow[]>([]);
+  const [adsetMeta, setAdsetMeta] = useState<{
+    totalAccounts: number; truncatedAccounts: number;
+    perAccountErrors: Array<{ account_id: string; account_name: string; error: string }>;
+  }>({ totalAccounts: 0, truncatedAccounts: 0, perAccountErrors: [] });
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
-  const [selectedCampaigns, setSelectedCampaigns] = useState<Set<string>>(new Set());
+  const [selectedAdsets, setSelectedAdsets] = useState<Set<string>>(new Set()); // fb adset IDs
   const [accountSearch, setAccountSearch] = useState("");
   const [accountStatus, setAccountStatus] = useState("all");
 
@@ -56,13 +68,22 @@ function AddPartnerPage() {
     setLoadingAccounts(true);
     setAccountLoadError(null);
     try {
-      const res = await listAccountsFn({ data: undefined as any });
-      const list = res ?? [];
-      setAccounts(list);
-      setLiveError((list[0] as any)?.liveError ?? null);
+      const [accountsRes, adsetsRes] = await Promise.all([
+        listAccountsFn({ data: undefined as any }),
+        listAdSetsFn({ data: undefined as any }),
+      ]);
+      const accList = accountsRes ?? [];
+      setAccounts(accList);
+      setAdsets(adsetsRes?.adsets ?? []);
+      setAdsetMeta({
+        totalAccounts: adsetsRes?.totalAccounts ?? 0,
+        truncatedAccounts: adsetsRes?.truncatedAccounts ?? 0,
+        perAccountErrors: adsetsRes?.perAccountErrors ?? [],
+      });
+      setLiveError(adsetsRes?.liveError ?? (accList[0] as any)?.liveError ?? null);
       setLastLoadedAt(new Date());
     } catch (e: any) {
-      setAccountLoadError(e?.message ?? "Could not load Meta campaigns");
+      setAccountLoadError(e?.message ?? "Could not load Meta ad sets");
     } finally {
       setLoadingAccounts(false);
     }
@@ -99,28 +120,37 @@ function AddPartnerPage() {
     toast.success(`Converted ৳${amt.toLocaleString()} → $${usd.toFixed(2)}`);
   };
 
-  const toggleAccount = (id: string) => {
-    setSelectedAccounts((prev) => {
+  const toggleAdset = (id: string) => {
+    setSelectedAdsets((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
 
-  const toggleCampaign = (id: string) => {
-    setSelectedCampaigns((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  const filteredAccounts = accounts.filter((a) => {
-    if (accountStatus === "active" && (Number(a.activeCampaignCount) || 0) === 0) return false;
-    const campaignText = (a.topCampaigns ?? []).map((c: any) => c.name).join(" ");
-    if (accountSearch && !`${a.name} ${a.id} ${campaignText}`.toLowerCase().includes(accountSearch.toLowerCase())) return false;
+  const filteredAdsets = adsets.filter((a) => {
+    if (accountStatus === "active" && a.status !== "ACTIVE") return false;
+    if (accountStatus !== "all" && accountStatus !== "active" && a.status !== accountStatus) return false;
+    if (accountSearch) {
+      const q = accountSearch.toLowerCase();
+      const hay = `${a.name} ${a.campaign_name} ${a.account_name} ${a.id} ${a.campaign_id}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
+
+  // Group filtered ad sets by account for the reference-style grouped grid.
+  const groupedByAccount = (() => {
+    const groups = new Map<string, { account_id: string; account_name: string; currency: string | null; items: AdSetRow[] }>();
+    for (const a of filteredAdsets) {
+      const key = a.account_id;
+      const g = groups.get(key) ?? { account_id: a.account_id, account_name: a.account_name, currency: a.currency, items: [] };
+      g.items.push(a);
+      groups.set(key, g);
+    }
+    return Array.from(groups.values()).sort((x, y) => y.items.length - x.items.length || x.account_name.localeCompare(y.account_name));
+  })();
+
 
   const onSave = async () => {
     if (!name.trim()) { toast.error("Client name is required"); return; }
