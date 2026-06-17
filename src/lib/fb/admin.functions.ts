@@ -786,3 +786,134 @@ export const clearAllData = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true, result: data };
   });
+
+// ============ List ALL ad sets (live from Meta) for Campaign Assignment ============
+// Returns every ad set the System User token can see, with parent campaign
+// name and a representative ad thumbnail. Used in the "Add New Partner"
+// Campaign Assignment panel so the user can search/select at ad-set level.
+export const listAvailableAdSets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const supabaseAdmin = await requireAdmin(context.userId);
+    const { data: s } = await supabaseAdmin
+      .from("app_settings")
+      .select("fb_system_user_token,fb_business_id")
+      .eq("id", 1)
+      .maybeSingle();
+    const token = s?.fb_system_user_token;
+    if (!token) throw new Error("No Facebook token configured. Open Meta connection settings first.");
+
+    const { fb } = await import("./api.server");
+
+    // Live list of ad accounts visible to the token.
+    let liveAccounts: any[] = [];
+    let liveError: string | null = null;
+    try {
+      liveAccounts = await fb.listAdAccounts(token, s?.fb_business_id);
+    } catch (e: any) {
+      liveError = e?.message ?? "Could not reach Meta";
+    }
+
+    // Existing internal mapping (for showing "already assigned" + linking to internal UUIDs).
+    const [{ data: existingAccounts }, { data: existingCampaigns }] = await Promise.all([
+      supabaseAdmin
+        .from("ad_accounts")
+        .select("id,fb_account_id,account_name,client_id,clients(name,slug)"),
+      supabaseAdmin
+        .from("campaigns")
+        .select("id,fb_campaign_id,ad_account_id"),
+    ]);
+    const accByFb = new Map<string, any>();
+    for (const a of existingAccounts ?? []) accByFb.set(a.fb_account_id, a);
+    const internalCampaignByFb = new Map<string, string>();
+    for (const c of existingCampaigns ?? []) {
+      if (c.fb_campaign_id) internalCampaignByFb.set(c.fb_campaign_id, c.id);
+    }
+
+    // Limit how many accounts we fan-out to keep latency sane.
+    const MAX_ACCOUNTS = 20;
+    const accountsToFetch = liveAccounts.slice(0, MAX_ACCOUNTS);
+
+    type AdSetRow = {
+      id: string;
+      name: string;
+      status: string;
+      campaign_id: string;
+      campaign_name: string;
+      account_id: string;
+      account_name: string;
+      currency: string | null;
+      thumbnail_url: string | null;
+      internal_campaign_id: string | null;
+      assignedClientName: string | null;
+      assignedClientSlug: string | null;
+    };
+    const results: AdSetRow[] = [];
+    const perAccountErrors: Array<{ account_id: string; account_name: string; error: string }> = [];
+
+    await Promise.all(
+      accountsToFetch.map(async (acc) => {
+        try {
+          const [campaigns, adsets, ads] = await Promise.all([
+            fb.listCampaigns(acc.id, token),
+            fb.listAdSets(acc.id, token),
+            fb.listAds(acc.id, token),
+          ]);
+          const campaignNameById = new Map<string, string>();
+          for (const c of campaigns as any[]) campaignNameById.set(c.id, c.name);
+
+          // Pick first available thumbnail per adset_id.
+          const thumbByAdset = new Map<string, string>();
+          for (const ad of ads as any[]) {
+            const adsetId = ad.adset_id;
+            if (!adsetId || thumbByAdset.has(adsetId)) continue;
+            const thumb = ad?.creative?.thumbnail_url ?? null;
+            if (thumb) thumbByAdset.set(adsetId, thumb);
+          }
+
+          const dbAcc = accByFb.get(acc.id);
+          const client = Array.isArray(dbAcc?.clients) ? dbAcc.clients[0] : dbAcc?.clients;
+          const assignedClientName =
+            client && client.slug !== "meta-imported-accounts" ? client.name : null;
+          const assignedClientSlug =
+            client && client.slug !== "meta-imported-accounts" ? client.slug : null;
+
+          for (const a of adsets as any[]) {
+            results.push({
+              id: a.id,
+              name: a.name,
+              status: a.effective_status ?? a.status ?? "UNKNOWN",
+              campaign_id: a.campaign_id,
+              campaign_name: campaignNameById.get(a.campaign_id) ?? "(unknown campaign)",
+              account_id: acc.id,
+              account_name: acc.name ?? acc.id,
+              currency: acc.currency ?? null,
+              thumbnail_url: thumbByAdset.get(a.id) ?? null,
+              internal_campaign_id: internalCampaignByFb.get(a.campaign_id) ?? null,
+              assignedClientName,
+              assignedClientSlug,
+            });
+          }
+        } catch (e: any) {
+          perAccountErrors.push({
+            account_id: acc.id,
+            account_name: acc.name ?? acc.id,
+            error: e?.message ?? String(e),
+          });
+        }
+      })
+    );
+
+    return {
+      adsets: results,
+      accounts: accountsToFetch.map((a) => ({
+        id: a.id,
+        name: a.name,
+        currency: a.currency ?? null,
+      })),
+      totalAccounts: liveAccounts.length,
+      truncatedAccounts: Math.max(0, liveAccounts.length - MAX_ACCOUNTS),
+      perAccountErrors,
+      liveError,
+    };
+  });
