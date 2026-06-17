@@ -17,6 +17,7 @@ import { toCsv, downloadCsv } from "@/lib/csv";
 import { useI18n } from "@/lib/i18n-context";
 import { ThemePicker, LanguageToggle, ModeToggle } from "@/components/HeaderControls";
 import { LiveClock } from "@/components/LiveClock";
+import { LogoMark } from "@/components/Logo";
 import { z } from "zod";
 
 const searchSchema = z.object({ token: z.string().optional() });
