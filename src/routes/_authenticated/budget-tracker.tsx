@@ -78,8 +78,8 @@ function BudgetTracker() {
 
           return (
             <div key={c.id} className="glass-card p-5 space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="font-semibold">{c.name}</div>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="font-semibold min-w-0 truncate">{c.name}</div>
                 <div className="text-xs text-muted-foreground">{c.currency} {spent.toFixed(2)} / {c.currency} {budget.toFixed(2)}</div>
               </div>
 

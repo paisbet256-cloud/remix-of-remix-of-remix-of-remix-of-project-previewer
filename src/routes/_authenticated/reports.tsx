@@ -32,9 +32,9 @@ function ReportsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-end justify-between">
-        <div><h1 className="text-2xl font-bold">Reports</h1><p className="text-muted-foreground text-sm">Performance summary per client. Export to CSV.</p></div>
-        <button onClick={exportCsv} className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-primary-glow text-primary-foreground px-4 py-2 text-sm font-semibold"><Download className="size-4" /> Export CSV</button>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div className="min-w-0"><h1 className="text-2xl font-bold">Reports</h1><p className="text-muted-foreground text-sm">Performance summary per client. Export to CSV.</p></div>
+        <button onClick={exportCsv} className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-primary-glow text-primary-foreground px-4 py-2 text-sm font-semibold shrink-0"><Download className="size-4" /> Export CSV</button>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         {(clients ?? []).length === 0 ? (

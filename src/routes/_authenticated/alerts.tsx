@@ -27,12 +27,12 @@ function AlertsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-end justify-between">
-        <div>
+      <div className="flex items-end justify-between flex-wrap gap-3">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold">Alerts</h1>
           <p className="text-muted-foreground text-sm">Budget, performance, and sync notifications.</p>
         </div>
-        <button onClick={markAll} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated"><CheckCheck className="size-4" /> Mark all read</button>
+        <button onClick={markAll} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated shrink-0"><CheckCheck className="size-4" /> Mark all read</button>
       </div>
 
       <div className="space-y-2">

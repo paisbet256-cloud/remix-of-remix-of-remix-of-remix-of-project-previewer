@@ -191,7 +191,7 @@ function Dashboard() {
         <div className="relative z-10 flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
             <div className="inline-flex items-center gap-2 text-xs font-medium text-primary"><span>🌅</span> Good Day, {" "}<span className="text-foreground">Welcome back</span> ✨</div>
-            <h1 className="mt-2 text-3xl lg:text-4xl font-bold">Welcome to your <span className="gradient-text">Command Center</span></h1>
+            <h1 className="mt-2 text-2xl sm:text-3xl lg:text-4xl font-bold">Welcome to your <span className="gradient-text">Command Center</span></h1>
             <p className="mt-2 text-muted-foreground">Track every campaign, every client, every dollar — all in real time.</p>
             <div className="mt-5 flex flex-wrap gap-2">
               <button onClick={onSync} disabled={syncing} className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-primary to-primary-glow text-primary-foreground px-4 py-2.5 text-sm font-semibold hover:opacity-90 disabled:opacity-50">
@@ -403,7 +403,7 @@ function KpiCard({ icon: Icon, label, value, accent }: { icon: any; label: strin
         </span>
       </div>
       <div className="mt-4 text-[11px] font-semibold tracking-[0.14em] uppercase text-muted-foreground">{label}</div>
-      <div key={value} className="mt-1 text-3xl font-bold gv-count tabular-nums">{value}</div>
+      <div key={value} className="mt-1 text-2xl sm:text-3xl font-bold gv-count tabular-nums truncate">{value}</div>
     </div>
   );
 }

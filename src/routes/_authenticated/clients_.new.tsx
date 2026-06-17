@@ -198,7 +198,7 @@ function AddPartnerPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-3xl font-bold">Add New Partner</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold">Add New Partner</h1>
           <p className="text-muted-foreground text-sm mt-1">Create a new client profile and assign campaign access</p>
         </div>
         <Link to="/clients" className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface hover:bg-surface-elevated px-4 py-2 text-sm font-semibold">
