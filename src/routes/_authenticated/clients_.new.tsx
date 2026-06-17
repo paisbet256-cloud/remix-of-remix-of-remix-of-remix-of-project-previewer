@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient, listAvailableAdAccounts, syncAllAccountsNow } from "@/lib/fb/admin.functions";
+import { createClient, listAvailableAdAccounts, listAvailableAdSets, syncAllAccountsNow } from "@/lib/fb/admin.functions";
 import { toast } from "sonner";
 import { ArrowLeft, Search, Lock, ShieldCheck, ChevronDown, Loader2, Check, AlertCircle, RefreshCw, Clock, Wifi, WifiOff } from "lucide-react";
 
