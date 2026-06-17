@@ -525,10 +525,6 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
         </div>
 
         <footer className="text-center text-xs text-muted-foreground py-6 space-y-2 border-t border-border/40 mt-4">
-          <div className="flex items-center justify-center gap-2">
-            <LogoMark className="size-8 p-0.5" />
-            <span className="font-bold gradient-text text-sm">GrowVibe Ads Solution</span>
-          </div>
           <div className="flex items-center justify-center gap-2 font-medium">
             <CheckCircle2 className="size-3.5 text-emerald-500" />
             <span>{t("portal.autoUpdated")}</span>
@@ -539,6 +535,12 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
           <div className="flex items-center justify-center gap-1.5 text-[11px] opacity-70">
             <ClockIcon className="size-3" />
             {t("portal.lastSync")}: {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleString() : "—"}
+          </div>
+          <div className="flex items-center justify-center gap-2.5 pt-3">
+            <LogoMark className="size-10 p-0.5 gv-float" />
+            <span className="font-display font-extrabold text-lg sm:text-xl gradient-text gv-brand-shimmer tracking-tight">
+              GrowVibe Ads Solution
+            </span>
           </div>
         </footer>
       </main>
