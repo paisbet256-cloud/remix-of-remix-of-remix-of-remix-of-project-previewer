@@ -1,11 +1,11 @@
 {
-  "version": 1,
   "asset_id": "5f34e837-915f-4fd7-8378-825721dfc163",
-  "project_id": "ae4c9431-6ed4-4434-bce2-b7d518be2b6a",
-  "url": "/__l5e/assets-v1/5f34e837-915f-4fd7-8378-825721dfc163/growvibe-logo.png",
-  "r2_key": "a/v1/ae4c9431-6ed4-4434-bce2-b7d518be2b6a/5f34e837-915f-4fd7-8378-825721dfc163/growvibe-logo.png",
-  "original_filename": "growvibe-logo.png",
-  "size": 720874,
   "content_type": "image/png",
-  "created_at": "2026-06-17T22:42:24Z"
+  "created_at": "2026-06-17T22:42:24Z",
+  "original_filename": "growvibe-logo.png",
+  "project_id": "3416cbd2-fd2d-4bed-8ba0-40b2a0e0ddb7",
+  "r2_key": "a/v1/3416cbd2-fd2d-4bed-8ba0-40b2a0e0ddb7/5f34e837-915f-4fd7-8378-825721dfc163/growvibe-logo.png",
+  "size": 720874,
+  "url": "/__l5e/assets-v1/5f34e837-915f-4fd7-8378-825721dfc163/growvibe-logo.png",
+  "version": 1
 }
