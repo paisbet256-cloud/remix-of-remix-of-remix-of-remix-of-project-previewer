@@ -17,6 +17,7 @@ import { toCsv, downloadCsv } from "@/lib/csv";
 import { useI18n } from "@/lib/i18n-context";
 import { ThemePicker, LanguageToggle, ModeToggle } from "@/components/HeaderControls";
 import { LiveClock } from "@/components/LiveClock";
+import { LogoMark } from "@/components/Logo";
 import { z } from "zod";
 
 const searchSchema = z.object({ token: z.string().optional() });
@@ -209,14 +210,15 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
       <header className="bg-[oklch(0.18_0.04_262)] text-white border-b border-white/10 sticky top-0 z-30 backdrop-blur shadow-lg">
         <div className="container mx-auto flex items-center justify-between gap-3 px-4 py-4 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
+            <LogoMark className="size-11 shrink-0 p-1 shadow-xl" />
             <div
-              className="size-11 shrink-0 rounded-xl grid place-items-center font-bold text-white shadow-xl text-lg"
+              className="hidden sm:grid size-11 shrink-0 rounded-xl place-items-center font-bold text-white shadow-xl text-lg"
               style={{ background: client.brand_color || "linear-gradient(135deg, oklch(0.65 0.18 260), oklch(0.78 0.18 165))" }}
             >
               {client.name.slice(0, 1).toUpperCase()}
             </div>
             <div className="min-w-0">
-              <div className="font-display font-extrabold text-xl lg:text-2xl tracking-tight leading-tight truncate">GrowVibe Ads Solution</div>
+              <div className="font-display font-extrabold text-lg sm:text-xl lg:text-2xl tracking-tight leading-tight truncate">GrowVibe Ads Solution</div>
               <div className="text-[12px] text-white/70 truncate"><span className="font-semibold text-white/85">{client.name}</span> · {t("portal.tagline")}</div>
             </div>
           </div>
@@ -524,19 +526,21 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
           </button>
           <button onClick={() => window.print()}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-foreground text-background px-4 py-2 text-sm font-semibold hover:opacity-90">
-            <Printer className="size-4" /> Print
+            <Printer className="size-4" /> {t("portal.print")}
           </button>
         </div>
 
-        <footer className="text-center text-xs text-muted-foreground py-6 space-y-1.5 border-t border-border/40 mt-4">
+        <footer className="text-center text-xs text-muted-foreground py-6 space-y-2 border-t border-border/40 mt-4">
+          <div className="flex items-center justify-center gap-2">
+            <LogoMark className="size-8 p-0.5" />
+            <span className="font-bold gradient-text text-sm">GrowVibe Ads Solution</span>
+          </div>
           <div className="flex items-center justify-center gap-2 font-medium">
             <CheckCircle2 className="size-3.5 text-emerald-500" />
-            <span>Data updated automatically</span>
-            <span className="text-muted-foreground/50">|</span>
-            <span className="font-semibold text-foreground">GrowVibe Ads Analytics</span>
+            <span>{t("portal.autoUpdated")}</span>
           </div>
           <div className="text-muted-foreground/80">
-            Powered by <span className="font-bold gradient-text">GrowVibe Ads Solution</span>
+            {t("portal.poweredBy")} <span className="font-bold gradient-text">GrowVibe Ads Solution</span>
           </div>
           <div className="flex items-center justify-center gap-1.5 text-[11px] opacity-70">
             <ClockIcon className="size-3" />
