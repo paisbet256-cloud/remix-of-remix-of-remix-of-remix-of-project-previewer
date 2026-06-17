@@ -16,6 +16,7 @@ function AddPartnerPage() {
   const qc = useQueryClient();
   const createFn = useServerFn(createClient);
   const listAccountsFn = useServerFn(listAvailableAdAccounts);
+  const listAdSetsFn = useServerFn(listAvailableAdSets);
   const syncNowFn = useServerFn(syncAllAccountsNow);
 
   // Profile fields
