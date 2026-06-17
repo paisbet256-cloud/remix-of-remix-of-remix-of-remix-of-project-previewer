@@ -103,8 +103,8 @@ function ClientReportPage() {
 
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-3">
-          <h1 className="text-4xl font-extrabold tracking-tight">{client.name}</h1>
+        <div className="flex items-center gap-3 min-w-0 flex-wrap">
+          <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight break-words">{client.name}</h1>
           <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
             client.status === "active" ? "bg-emerald-500/15 text-emerald-400"
             : client.status === "paused" ? "bg-amber-500/15 text-amber-400"
@@ -259,7 +259,7 @@ function KPI({ icon: Icon, label, value, sub, tone = "emerald", compact = false 
         <Icon className="size-4" />
       </div>
       <div className="text-[10px] uppercase tracking-wider text-muted-foreground mt-3">{label}</div>
-      <div className={`${compact ? "text-2xl" : "text-3xl"} font-extrabold mt-1`}>{value}</div>
+      <div className={`${compact ? "text-xl sm:text-2xl" : "text-2xl sm:text-3xl"} font-extrabold mt-1 break-words`}>{value}</div>
       {sub && <div className="text-[11px] text-muted-foreground mt-0.5">{sub}</div>}
     </div>
   );
