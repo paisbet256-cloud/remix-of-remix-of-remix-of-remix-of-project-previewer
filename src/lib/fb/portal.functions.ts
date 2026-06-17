@@ -7,13 +7,31 @@ import { z } from "zod";
 
 async function loadClientWithAuth(slug: string, token?: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-  const { data: client, error } = await supabaseAdmin
+  const code = slug.toUpperCase();
+  // Try client_code first (uppercase codes like BZJECYGM), then slug.
+  let { data: client, error } = await supabaseAdmin
     .from("clients")
     .select("id,name,slug,client_code,company,logo_url,brand_color,status,monthly_budget,deposit_amount,deposit_currency,bdt_rate,portal_token,commission_enabled,commission_percent")
-    .or(`slug.eq.${slug},client_code.eq.${slug.toUpperCase()}`)
+    .eq("client_code", code)
     .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!client || client.status === "archived") return { notFound: true as const };
+  if (!client && !error) {
+    const r2 = await supabaseAdmin
+      .from("clients")
+      .select("id,name,slug,client_code,company,logo_url,brand_color,status,monthly_budget,deposit_amount,deposit_currency,bdt_rate,portal_token,commission_enabled,commission_percent")
+      .eq("slug", slug)
+      .maybeSingle();
+    client = r2.data as any;
+    error = r2.error as any;
+  }
+  if (error) {
+    console.error("[portal] client lookup error", { slug, code, error: error.message });
+    throw new Error(error.message);
+  }
+  if (!client) {
+    console.error("[portal] client not found", { slug, code });
+    return { notFound: true as const };
+  }
+  if (client.status === "archived") return { notFound: true as const };
 
   if (client.portal_token && client.portal_token !== token) {
     return { forbidden: true as const };
