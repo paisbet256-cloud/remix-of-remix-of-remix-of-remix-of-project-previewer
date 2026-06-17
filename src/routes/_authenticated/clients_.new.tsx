@@ -170,8 +170,17 @@ function AddPartnerPage() {
           commission_enabled: commissionEnabled,
           commission_percent: Number(commissionPct) || 0,
           commission_notes: commissionNotes || undefined,
-          ad_account_ids: Array.from(selectedAccounts),
-          campaign_ids: Array.from(selectedCampaigns),
+          // Derive distinct accounts + parent-campaign internal IDs from the
+          // selected ad sets. Account assignment stays automatic so the
+          // selected ad sets remain visible to the client portal.
+          ad_account_ids: Array.from(new Set(
+            adsets.filter((a) => selectedAdsets.has(a.id)).map((a) => a.account_id)
+          )),
+          campaign_ids: Array.from(new Set(
+            adsets
+              .filter((a) => selectedAdsets.has(a.id) && a.internal_campaign_id)
+              .map((a) => a.internal_campaign_id as string)
+          )),
         },
       });
       toast.success("Partner saved");
