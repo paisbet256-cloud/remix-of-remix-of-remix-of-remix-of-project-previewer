@@ -453,3 +453,16 @@
 }
 .gv-pulse-dot { animation: gv-pulse-ring 2s ease-out infinite; }
 
+/* Brand wordmark shimmer — sweeps a soft highlight across the gradient text */
+@keyframes gv-brand-shimmer {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.gv-brand-shimmer {
+  background-size: 200% 100%;
+  animation: gv-brand-shimmer 4s ease-in-out infinite;
+  text-shadow: 0 0 24px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+
+

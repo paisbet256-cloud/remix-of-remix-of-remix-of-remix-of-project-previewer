@@ -211,12 +211,6 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
         <div className="container mx-auto flex items-center justify-between gap-3 px-4 py-4 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <LogoMark className="size-11 shrink-0 p-1 shadow-xl" />
-            <div
-              className="hidden sm:grid size-11 shrink-0 rounded-xl place-items-center font-bold text-white shadow-xl text-lg"
-              style={{ background: client.brand_color || "linear-gradient(135deg, oklch(0.65 0.18 260), oklch(0.78 0.18 165))" }}
-            >
-              {client.name.slice(0, 1).toUpperCase()}
-            </div>
             <div className="min-w-0">
               <div className="font-display font-extrabold text-lg sm:text-xl lg:text-2xl tracking-tight leading-tight truncate">GrowVibe Ads Solution</div>
               <div className="text-[12px] text-white/70 truncate"><span className="font-semibold text-white/85">{client.name}</span> · {t("portal.tagline")}</div>
@@ -531,10 +525,6 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
         </div>
 
         <footer className="text-center text-xs text-muted-foreground py-6 space-y-2 border-t border-border/40 mt-4">
-          <div className="flex items-center justify-center gap-2">
-            <LogoMark className="size-8 p-0.5" />
-            <span className="font-bold gradient-text text-sm">GrowVibe Ads Solution</span>
-          </div>
           <div className="flex items-center justify-center gap-2 font-medium">
             <CheckCircle2 className="size-3.5 text-emerald-500" />
             <span>{t("portal.autoUpdated")}</span>
@@ -545,6 +535,12 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
           <div className="flex items-center justify-center gap-1.5 text-[11px] opacity-70">
             <ClockIcon className="size-3" />
             {t("portal.lastSync")}: {dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleString() : "—"}
+          </div>
+          <div className="flex items-center justify-center gap-2.5 pt-3">
+            <LogoMark className="size-10 p-0.5 gv-float" />
+            <span className="font-display font-extrabold text-lg sm:text-xl gradient-text gv-brand-shimmer tracking-tight">
+              GrowVibe Ads Solution
+            </span>
           </div>
         </footer>
       </main>
