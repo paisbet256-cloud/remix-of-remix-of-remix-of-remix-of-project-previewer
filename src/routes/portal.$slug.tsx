@@ -352,21 +352,6 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
           <BentoMetric label="Cost / Result" value={totals.results > 0 ? cur(costPerResult) : "—"} dot="violet" icon={<Coins className="size-3.5" />} />
         </div>
 
-        {/* Last 7 Days strip */}
-        <div className="rounded-2xl bg-card border border-border p-5 shadow-sm gv-lift">
-          <div className="flex items-center justify-between mb-4">
-            <div className="font-bold inline-flex items-center gap-2">
-              <Sparkles className="size-4 text-primary" />
-              Last 7 Days
-            </div>
-            <div className="text-xs text-muted-foreground">{last7DayCount} day{last7DayCount !== 1 ? "s" : ""}</div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <MiniStat label="Results" value={num(last7Sum.results)} icon={<Target className="size-3.5" />} />
-            <MiniStat label="Total Spend" value={dcur(last7Sum.spend)} icon={<Wallet className="size-3.5" />} />
-            <MiniStat label="Cost / Result" value={last7Sum.results > 0 ? cur(mk(last7Sum.spend) / last7Sum.results) : "—"} icon={<Coins className="size-3.5" />} />
-          </div>
-        </div>
 
 
         {/* ============ Performance Snapshot ============ */}
