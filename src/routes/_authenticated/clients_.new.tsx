@@ -2,7 +2,7 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient, listAvailableAdAccounts, syncAllAccountsNow } from "@/lib/fb/admin.functions";
+import { createClient, listAvailableAdAccounts, listAvailableAdSets, syncAllAccountsNow } from "@/lib/fb/admin.functions";
 import { toast } from "sonner";
 import { ArrowLeft, Search, Lock, ShieldCheck, ChevronDown, Loader2, Check, AlertCircle, RefreshCw, Clock, Wifi, WifiOff } from "lucide-react";
 
@@ -16,6 +16,7 @@ function AddPartnerPage() {
   const qc = useQueryClient();
   const createFn = useServerFn(createClient);
   const listAccountsFn = useServerFn(listAvailableAdAccounts);
+  const listAdSetsFn = useServerFn(listAvailableAdSets);
   const syncNowFn = useServerFn(syncAllAccountsNow);
 
   // Profile fields
@@ -37,15 +38,27 @@ function AddPartnerPage() {
   const [commissionPct, setCommissionPct] = useState<string>("");
   const [commissionNotes, setCommissionNotes] = useState("");
 
-  // Campaign assignment
+  // Campaign assignment — now ad-set level
+  type AdSetRow = {
+    id: string; name: string; status: string;
+    campaign_id: string; campaign_name: string;
+    account_id: string; account_name: string;
+    currency: string | null; thumbnail_url: string | null;
+    internal_campaign_id: string | null;
+    assignedClientName: string | null; assignedClientSlug: string | null;
+  };
   const [accounts, setAccounts] = useState<any[]>([]);
+  const [adsets, setAdsets] = useState<AdSetRow[]>([]);
+  const [adsetMeta, setAdsetMeta] = useState<{
+    totalAccounts: number; truncatedAccounts: number;
+    perAccountErrors: Array<{ account_id: string; account_name: string; error: string }>;
+  }>({ totalAccounts: 0, truncatedAccounts: 0, perAccountErrors: [] });
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [accountLoadError, setAccountLoadError] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set());
-  const [selectedCampaigns, setSelectedCampaigns] = useState<Set<string>>(new Set());
+  const [selectedAdsets, setSelectedAdsets] = useState<Set<string>>(new Set()); // fb adset IDs
   const [accountSearch, setAccountSearch] = useState("");
   const [accountStatus, setAccountStatus] = useState("all");
 
@@ -55,13 +68,22 @@ function AddPartnerPage() {
     setLoadingAccounts(true);
     setAccountLoadError(null);
     try {
-      const res = await listAccountsFn({ data: undefined as any });
-      const list = res ?? [];
-      setAccounts(list);
-      setLiveError((list[0] as any)?.liveError ?? null);
+      const [accountsRes, adsetsRes] = await Promise.all([
+        listAccountsFn({ data: undefined as any }),
+        listAdSetsFn({ data: undefined as any }),
+      ]);
+      const accList = accountsRes ?? [];
+      setAccounts(accList);
+      setAdsets(adsetsRes?.adsets ?? []);
+      setAdsetMeta({
+        totalAccounts: adsetsRes?.totalAccounts ?? 0,
+        truncatedAccounts: adsetsRes?.truncatedAccounts ?? 0,
+        perAccountErrors: adsetsRes?.perAccountErrors ?? [],
+      });
+      setLiveError(adsetsRes?.liveError ?? (accList[0] as any)?.liveError ?? null);
       setLastLoadedAt(new Date());
     } catch (e: any) {
-      setAccountLoadError(e?.message ?? "Could not load Meta campaigns");
+      setAccountLoadError(e?.message ?? "Could not load Meta ad sets");
     } finally {
       setLoadingAccounts(false);
     }
@@ -98,28 +120,37 @@ function AddPartnerPage() {
     toast.success(`Converted ৳${amt.toLocaleString()} → $${usd.toFixed(2)}`);
   };
 
-  const toggleAccount = (id: string) => {
-    setSelectedAccounts((prev) => {
+  const toggleAdset = (id: string) => {
+    setSelectedAdsets((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   };
 
-  const toggleCampaign = (id: string) => {
-    setSelectedCampaigns((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  };
-
-  const filteredAccounts = accounts.filter((a) => {
-    if (accountStatus === "active" && (Number(a.activeCampaignCount) || 0) === 0) return false;
-    const campaignText = (a.topCampaigns ?? []).map((c: any) => c.name).join(" ");
-    if (accountSearch && !`${a.name} ${a.id} ${campaignText}`.toLowerCase().includes(accountSearch.toLowerCase())) return false;
+  const filteredAdsets = adsets.filter((a) => {
+    if (accountStatus === "active" && a.status !== "ACTIVE") return false;
+    if (accountStatus !== "all" && accountStatus !== "active" && a.status !== accountStatus) return false;
+    if (accountSearch) {
+      const q = accountSearch.toLowerCase();
+      const hay = `${a.name} ${a.campaign_name} ${a.account_name} ${a.id} ${a.campaign_id}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
     return true;
   });
+
+  // Group filtered ad sets by account for the reference-style grouped grid.
+  const groupedByAccount = (() => {
+    const groups = new Map<string, { account_id: string; account_name: string; currency: string | null; items: AdSetRow[] }>();
+    for (const a of filteredAdsets) {
+      const key = a.account_id;
+      const g = groups.get(key) ?? { account_id: a.account_id, account_name: a.account_name, currency: a.currency, items: [] };
+      g.items.push(a);
+      groups.set(key, g);
+    }
+    return Array.from(groups.values()).sort((x, y) => y.items.length - x.items.length || x.account_name.localeCompare(y.account_name));
+  })();
+
 
   const onSave = async () => {
     if (!name.trim()) { toast.error("Client name is required"); return; }
@@ -139,8 +170,17 @@ function AddPartnerPage() {
           commission_enabled: commissionEnabled,
           commission_percent: Number(commissionPct) || 0,
           commission_notes: commissionNotes || undefined,
-          ad_account_ids: Array.from(selectedAccounts),
-          campaign_ids: Array.from(selectedCampaigns),
+          // Derive distinct accounts + parent-campaign internal IDs from the
+          // selected ad sets. Account assignment stays automatic so the
+          // selected ad sets remain visible to the client portal.
+          ad_account_ids: Array.from(new Set(
+            adsets.filter((a) => selectedAdsets.has(a.id)).map((a) => a.account_id)
+          )),
+          campaign_ids: Array.from(new Set(
+            adsets
+              .filter((a) => selectedAdsets.has(a.id) && a.internal_campaign_id)
+              .map((a) => a.internal_campaign_id as string)
+          )),
         },
       });
       toast.success("Partner saved");
@@ -319,14 +359,18 @@ function AddPartnerPage() {
                 <input
                   value={accountSearch}
                   onChange={(e) => setAccountSearch(e.target.value)}
-                  placeholder="Search ad accounts by name…"
+                  placeholder="Search by ad set, campaign or account name…"
                   className="w-full rounded-lg bg-surface border border-border pl-9 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/40"
                 />
               </div>
               <div className="relative">
                 <select value={accountStatus} onChange={(e) => setAccountStatus(e.target.value)} className="appearance-none rounded-lg bg-surface border border-border pl-3 pr-9 py-2 text-sm">
                   <option value="all">All Statuses</option>
-                  <option value="active">Active</option>
+                  <option value="ACTIVE">Active</option>
+                  <option value="PAUSED">Paused</option>
+                  <option value="ADSET_PAUSED">Ad set paused</option>
+                  <option value="CAMPAIGN_PAUSED">Campaign paused</option>
+                  <option value="ARCHIVED">Archived</option>
                 </select>
                 <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
               </div>
@@ -352,75 +396,130 @@ function AddPartnerPage() {
                   <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} /> Retry / Sync now
                 </button>
               </div>
-            ) : filteredAccounts.length === 0 ? (
+            ) : groupedByAccount.length === 0 ? (
               <div className="py-12 text-center text-sm text-muted-foreground space-y-2">
-                <div>No matching ad accounts or campaigns found.</div>
-                <div className="text-xs">Try clearing search filters, or click <b>Sync now</b> above to pull the latest from Meta.</div>
+                <div>No matching ad sets found.</div>
+                <div className="text-xs">
+                  Try a different search, or click <b>Sync now</b> above to refresh from Meta.
+                </div>
               </div>
             ) : (
-              <ul className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
-                {filteredAccounts.map((a) => {
-                  const checked = selectedAccounts.has(a.id);
-                  const taken = a.alreadyConnected;
-                  return (
-                    <li key={a.id}>
+              <div className="space-y-4 max-h-[560px] overflow-y-auto pr-1">
+                {groupedByAccount.map((group) => (
+                  <div key={group.account_id} className="rounded-xl border border-border/60 bg-surface/40 overflow-hidden">
+                    {/* Account header */}
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border/40 bg-surface/60">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold truncate">{group.account_name}</div>
+                        <div className="text-[11px] text-muted-foreground truncate">
+                          <code>{group.account_id}</code>
+                          {group.currency ? <> · {group.currency}</> : null}
+                          <> · {group.items.length} ad set{group.items.length !== 1 ? "s" : ""}</>
+                        </div>
+                      </div>
                       <button
                         type="button"
-                        onClick={() => !taken && toggleAccount(a.id)}
-                        disabled={taken}
-                        className={`w-full text-left rounded-lg border px-3 py-2.5 transition flex items-start gap-3 ${
-                          checked ? "border-emerald-500/60 bg-emerald-500/10" : taken ? "border-border/60 bg-surface/40 opacity-70 cursor-not-allowed" : "border-border bg-surface hover:bg-surface-elevated"
-                        }`}
+                        onClick={() => {
+                          const allIds = group.items.map((i) => i.id);
+                          const allSelected = allIds.every((id) => selectedAdsets.has(id));
+                          setSelectedAdsets((prev) => {
+                            const next = new Set(prev);
+                            if (allSelected) allIds.forEach((id) => next.delete(id));
+                            else allIds.forEach((id) => next.add(id));
+                            return next;
+                          });
+                        }}
+                        className="text-[11px] rounded-md bg-primary/15 hover:bg-primary/25 text-primary px-2 py-1 font-semibold shrink-0"
                       >
-                        <div className={`mt-0.5 size-4 rounded border grid place-items-center shrink-0 ${checked ? "bg-emerald-500 border-emerald-500" : "border-border"}`}>
-                          {checked && <Check className="size-3 text-white" />}
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="font-medium text-sm truncate">{a.name}</div>
-                            {taken ? <span className="text-[10px] rounded-full bg-amber-500/15 text-amber-300 px-2 py-0.5 shrink-0">Assigned</span> : a.isImportBucket ? <span className="text-[10px] rounded-full bg-emerald-500/15 text-emerald-300 px-2 py-0.5 shrink-0">Ready</span> : null}
-                          </div>
-                          <div className="text-xs text-muted-foreground"><code>{a.id}</code> · {a.currency ?? "—"} · {a.timezone_name ?? "—"}</div>
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                            <span className="rounded-md bg-primary/10 text-primary px-2 py-0.5">{a.campaignCount ?? 0} campaigns</span>
-                            <span className="rounded-md bg-success/10 text-success px-2 py-0.5">{a.activeCampaignCount ?? 0} active</span>
-                            {a.connectedClientName && <span>Client: {a.connectedClientName}</span>}
-                          </div>
-                          {(a.topCampaigns ?? []).length > 0 && (
-                            <div className="mt-2 grid gap-1">
-                              {(a.topCampaigns ?? []).slice(0, 5).map((c: any, idx: number) => (
-                                <div key={`${a.id}-${c.id ?? idx}`} className="flex items-center justify-between gap-2 rounded-md bg-background/35 px-2 py-1 text-[11px]">
-                                  <label className="flex items-center gap-2 min-w-0 flex-1 cursor-pointer" onClick={(e) => e.stopPropagation()}>
-                                    <input
-                                      type="checkbox"
-                                      checked={selectedCampaigns.has(c.id)}
-                                      onChange={() => toggleCampaign(c.id)}
-                                      disabled={taken || !c.id}
-                                      className="rounded accent-emerald-500 shrink-0"
-                                    />
-                                    <span className="truncate">{c.name}</span>
-                                  </label>
-                                  <span className="text-muted-foreground shrink-0">{c.status ?? "—"}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
+                        {group.items.every((i) => selectedAdsets.has(i.id)) ? "Clear all" : "Select all"}
                       </button>
-                    </li>
-                  );
-                })}
-              </ul>
+                    </div>
+                    {/* Ad set cards */}
+                    <div className="grid sm:grid-cols-2 gap-2 p-3">
+                      {group.items.map((a) => {
+                        const checked = selectedAdsets.has(a.id);
+                        const status = (a.status || "").toUpperCase();
+                        const statusColor =
+                          status === "ACTIVE" ? "text-emerald-300 bg-emerald-500/15"
+                          : status === "PAUSED" || status === "CAMPAIGN_PAUSED" || status === "ADSET_PAUSED" ? "text-amber-300 bg-amber-500/15"
+                          : status === "ARCHIVED" ? "text-muted-foreground bg-muted/30"
+                          : status === "COMPLETED" ? "text-blue-300 bg-blue-500/15"
+                          : "text-foreground/70 bg-surface";
+                        return (
+                          <button
+                            key={a.id}
+                            type="button"
+                            onClick={() => toggleAdset(a.id)}
+                            className={`text-left rounded-lg border p-2 transition flex items-start gap-2 ${
+                              checked ? "border-emerald-500/60 bg-emerald-500/10" : "border-border bg-surface hover:bg-surface-elevated"
+                            }`}
+                          >
+                            <div className={`mt-0.5 size-4 rounded border grid place-items-center shrink-0 ${checked ? "bg-emerald-500 border-emerald-500" : "border-border"}`}>
+                              {checked && <Check className="size-3 text-white" />}
+                            </div>
+                            <div className="size-10 rounded-md overflow-hidden bg-surface-elevated shrink-0 grid place-items-center">
+                              {a.thumbnail_url ? (
+                                <img src={a.thumbnail_url} alt="" loading="lazy" className="size-full object-cover" />
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground">No img</span>
+                              )}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="text-[13px] font-medium leading-tight truncate" title={a.name}>{a.name}</div>
+                              <div className="text-[10px] text-muted-foreground truncate" title={a.campaign_name}>
+                                {a.campaign_name}
+                              </div>
+                              <div className="mt-1 flex items-center gap-1">
+                                <span className={`text-[9px] uppercase tracking-wide rounded px-1.5 py-0.5 font-semibold ${statusColor}`}>
+                                  {status.replace(/_/g, " ")}
+                                </span>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+                {adsetMeta.truncatedAccounts > 0 && (
+                  <div className="text-[11px] text-muted-foreground text-center py-2">
+                    Showing first {adsetMeta.totalAccounts - adsetMeta.truncatedAccounts} of {adsetMeta.totalAccounts} ad accounts.
+                    Narrow with search to find ad sets in other accounts.
+                  </div>
+                )}
+                {adsetMeta.perAccountErrors.length > 0 && (
+                  <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2 text-[11px] text-amber-200">
+                    <div className="font-semibold mb-1">Some accounts failed to load ({adsetMeta.perAccountErrors.length}):</div>
+                    <ul className="space-y-0.5 max-h-24 overflow-y-auto">
+                      {adsetMeta.perAccountErrors.slice(0, 6).map((e) => (
+                        <li key={e.account_id} className="truncate">• {e.account_name}: {e.error}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             )}
 
-            <div className="mt-4 pt-3 border-t border-border/40 text-xs text-muted-foreground">
-              {selectedCampaigns.size > 0 || selectedAccounts.size > 0
-                ? `${selectedCampaigns.size} campaign${selectedCampaigns.size !== 1 ? "s" : ""} and ${selectedAccounts.size} ad account${selectedAccounts.size !== 1 ? "s" : ""} selected`
-                : `${accounts.length} Meta ad account${accounts.length !== 1 ? "s" : ""} loaded from live connection and synced cache.`}
+            <div className="mt-4 pt-3 border-t border-border/40 text-xs text-muted-foreground flex items-center justify-between gap-2 flex-wrap">
+              <span>
+                {selectedAdsets.size > 0
+                  ? `${selectedAdsets.size} ad set${selectedAdsets.size !== 1 ? "s" : ""} selected`
+                  : `${adsets.length} ad set${adsets.length !== 1 ? "s" : ""} loaded from ${adsetMeta.totalAccounts} ad account${adsetMeta.totalAccounts !== 1 ? "s" : ""}.`}
+              </span>
+              {selectedAdsets.size > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedAdsets(new Set())}
+                  className="text-[11px] underline text-muted-foreground hover:text-foreground"
+                >
+                  Clear selection
+                </button>
+              )}
             </div>
           </section>
         </div>
       </div>
+
 
       {/* Footer actions */}
       <div className="sticky bottom-0 -mx-4 lg:-mx-6 mt-6 px-4 lg:px-6 py-3 bg-background/80 backdrop-blur-md border-t border-border/60 flex items-center justify-end gap-3">
