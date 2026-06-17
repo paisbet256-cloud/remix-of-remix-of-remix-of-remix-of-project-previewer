@@ -1,0 +1,47 @@
+import { useEffect, useState } from "react";
+import { Clock } from "lucide-react";
+import { useI18n } from "@/lib/i18n-context";
+
+// Bangladesh Standard Time = UTC+6 (no DST)
+function formatBD(d: Date, lang: "en" | "bn") {
+  const locale = lang === "bn" ? "bn-BD" : "en-GB";
+  const time = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false, timeZone: "Asia/Dhaka",
+  }).format(d);
+  const date = new Intl.DateTimeFormat(locale, {
+    weekday: "short", day: "2-digit", month: "short",
+    timeZone: "Asia/Dhaka",
+  }).format(d);
+  return { time, date };
+}
+
+export function LiveClock() {
+  const { lang, t } = useI18n();
+  const [now, setNow] = useState<Date | null>(null);
+
+  useEffect(() => {
+    setNow(new Date());
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!now) {
+    return (
+      <div className="hidden md:flex items-center gap-2 rounded-lg border border-border/60 bg-surface/60 px-3 py-1.5 text-xs">
+        <Clock className="size-3.5 text-primary" />
+        <span className="font-mono tabular-nums text-muted-foreground">--:--:--</span>
+      </div>
+    );
+  }
+  const { time, date } = formatBD(now, lang);
+  return (
+    <div className="hidden md:flex items-center gap-2.5 rounded-lg border border-border/60 bg-surface/60 px-3 py-1.5 text-xs">
+      <Clock className="size-3.5 text-primary animate-pulse" />
+      <div className="leading-tight">
+        <div className="font-mono tabular-nums font-semibold text-foreground">{time}</div>
+        <div className="text-[10px] text-muted-foreground">{date} · {t("time.bd")}</div>
+      </div>
+    </div>
+  );
+}
