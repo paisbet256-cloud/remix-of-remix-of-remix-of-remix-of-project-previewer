@@ -7,7 +7,8 @@ import { syncAllAccountsNow, getSettingsPublic, retestAndReimport, refreshAllDat
 import { toast } from "sonner";
 import { DollarSign, Users, CheckSquare, Megaphone, Activity, Eye, ArrowUpRight, RefreshCw, Plus, Sparkles, AlertCircle, Wallet, Loader2, ShieldCheck, Trash2, Clock } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from "recharts";
+import { ResponsiveContainer, Tooltip, PieChart, Pie, Cell } from "recharts";
+import CandlestickChart from "@/components/CandlestickChart";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — GrowVibe Ads Solution" }] }),
