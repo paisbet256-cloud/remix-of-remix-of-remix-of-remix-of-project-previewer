@@ -526,19 +526,21 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
           </button>
           <button onClick={() => window.print()}
                   className="inline-flex items-center gap-1.5 rounded-lg bg-foreground text-background px-4 py-2 text-sm font-semibold hover:opacity-90">
-            <Printer className="size-4" /> Print
+            <Printer className="size-4" /> {t("portal.print")}
           </button>
         </div>
 
-        <footer className="text-center text-xs text-muted-foreground py-6 space-y-1.5 border-t border-border/40 mt-4">
+        <footer className="text-center text-xs text-muted-foreground py-6 space-y-2 border-t border-border/40 mt-4">
+          <div className="flex items-center justify-center gap-2">
+            <LogoMark className="size-8 p-0.5" />
+            <span className="font-bold gradient-text text-sm">GrowVibe Ads Solution</span>
+          </div>
           <div className="flex items-center justify-center gap-2 font-medium">
             <CheckCircle2 className="size-3.5 text-emerald-500" />
-            <span>Data updated automatically</span>
-            <span className="text-muted-foreground/50">|</span>
-            <span className="font-semibold text-foreground">GrowVibe Ads Analytics</span>
+            <span>{t("portal.autoUpdated")}</span>
           </div>
           <div className="text-muted-foreground/80">
-            Powered by <span className="font-bold gradient-text">GrowVibe Ads Solution</span>
+            {t("portal.poweredBy")} <span className="font-bold gradient-text">GrowVibe Ads Solution</span>
           </div>
           <div className="flex items-center justify-center gap-1.5 text-[11px] opacity-70">
             <ClockIcon className="size-3" />
