@@ -98,21 +98,25 @@ function InsightsPage() {
         </div>
       </div>
       <div className="glass-card p-5">
-        <div className="flex items-center gap-2 mb-3"><BarChart3 className="size-4 text-primary" /><div className="font-semibold">Daily performance</div></div>
-        <div className="h-80">
-          <ResponsiveContainer>
-            <LineChart data={snapshots ?? []}>
-              <CartesianGrid stroke="oklch(0.30 0.04 263 / 0.3)" />
-              <XAxis dataKey="date" stroke="oklch(0.55 0.025 255)" fontSize={11} tickFormatter={(v) => v?.slice(5)} />
-              <YAxis stroke="oklch(0.55 0.025 255)" fontSize={11} />
-              <Tooltip contentStyle={{ background: "oklch(0.22 0.04 262)", border: "1px solid oklch(0.30 0.04 263)", borderRadius: 12 }} />
-              <Legend />
-              <Line type="monotone" dataKey="spend" stroke="oklch(0.78 0.18 165)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="clicks" stroke="oklch(0.66 0.22 295)" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="results" stroke="oklch(0.83 0.16 85)" strokeWidth={2} dot={false} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="size-4 text-primary" />
+            <div className="font-semibold">Daily performance</div>
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold rounded-md bg-primary/10 text-primary px-1.5 py-0.5">
+              Candlestick
+            </span>
+          </div>
         </div>
+        <CandlestickChart
+          data={(snapshots ?? []) as any}
+          height={340}
+          series={[
+            { key: "spend", label: "Spend", upColor: "oklch(0.78 0.18 165)", downColor: "oklch(0.66 0.22 25)", format: (v) => `$${v.toFixed(2)}` },
+            { key: "clicks", label: "Clicks", upColor: "oklch(0.72 0.19 295)", downColor: "oklch(0.66 0.22 25)", format: (v) => v.toLocaleString() },
+            { key: "results", label: "Results", upColor: "oklch(0.83 0.16 85)", downColor: "oklch(0.66 0.22 25)", format: (v) => v.toLocaleString() },
+            { key: "impressions", label: "Impressions", upColor: "oklch(0.78 0.14 200)", downColor: "oklch(0.66 0.22 25)", format: (v) => v.toLocaleString() },
+          ]}
+        />
       </div>
     </div>
   );
