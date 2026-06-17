@@ -211,12 +211,6 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
         <div className="container mx-auto flex items-center justify-between gap-3 px-4 py-4 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <LogoMark className="size-11 shrink-0 p-1 shadow-xl" />
-            <div
-              className="hidden sm:grid size-11 shrink-0 rounded-xl place-items-center font-bold text-white shadow-xl text-lg"
-              style={{ background: client.brand_color || "linear-gradient(135deg, oklch(0.65 0.18 260), oklch(0.78 0.18 165))" }}
-            >
-              {client.name.slice(0, 1).toUpperCase()}
-            </div>
             <div className="min-w-0">
               <div className="font-display font-extrabold text-lg sm:text-xl lg:text-2xl tracking-tight leading-tight truncate">GrowVibe Ads Solution</div>
               <div className="text-[12px] text-white/70 truncate"><span className="font-semibold text-white/85">{client.name}</span> · {t("portal.tagline")}</div>
