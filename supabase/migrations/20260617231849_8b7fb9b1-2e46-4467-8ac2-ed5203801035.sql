@@ -1,0 +1,1 @@
+GRANT EXECUTE ON FUNCTION public.generate_client_code() TO authenticated, service_role;
