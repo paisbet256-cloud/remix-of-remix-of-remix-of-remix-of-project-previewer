@@ -7,7 +7,8 @@ import { syncAllAccountsNow, getSettingsPublic, retestAndReimport, refreshAllDat
 import { toast } from "sonner";
 import { DollarSign, Users, CheckSquare, Megaphone, Activity, Eye, ArrowUpRight, RefreshCw, Plus, Sparkles, AlertCircle, Wallet, Loader2, ShieldCheck, Trash2, Clock } from "lucide-react";
 import { Link } from "@tanstack/react-router";
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from "recharts";
+import { ResponsiveContainer, Tooltip, PieChart, Pie, Cell } from "recharts";
+import CandlestickChart from "@/components/CandlestickChart";
 
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "Dashboard — GrowVibe Ads Solution" }] }),
@@ -291,28 +292,41 @@ function Dashboard() {
       <div className="grid gap-4 lg:grid-cols-3 gv-stagger">
 
         <div className="glass-card p-5 lg:col-span-2">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2 font-semibold"><Activity className="size-4 text-primary" /> Performance Overview (7 Days)</div>
-            <div className="flex gap-3 text-xs text-muted-foreground">
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-primary" />Spend</span>
-              <span className="inline-flex items-center gap-1.5"><span className="size-2 rounded-full bg-accent" />Results</span>
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <div className="flex items-center gap-2 font-semibold">
+              <Activity className="size-4 text-primary" /> Performance Overview (7 Days)
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold ml-1 rounded-md bg-primary/10 text-primary px-1.5 py-0.5">
+                Candlestick
+              </span>
             </div>
           </div>
-          <div className="h-64">
-            <ResponsiveContainer>
-              <AreaChart data={timeSeries ?? []}>
-                <defs>
-                  <linearGradient id="g1" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="oklch(0.78 0.18 165)" stopOpacity={0.5} /><stop offset="1" stopColor="oklch(0.78 0.18 165)" stopOpacity={0} /></linearGradient>
-                  <linearGradient id="g2" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stopColor="oklch(0.66 0.22 295)" stopOpacity={0.5} /><stop offset="1" stopColor="oklch(0.66 0.22 295)" stopOpacity={0} /></linearGradient>
-                </defs>
-                <XAxis dataKey="date" stroke="oklch(0.55 0.025 255)" fontSize={11} tickFormatter={(v) => v?.slice(5)} />
-                <YAxis stroke="oklch(0.55 0.025 255)" fontSize={11} />
-                <Tooltip contentStyle={{ background: "oklch(0.22 0.04 262)", border: "1px solid oklch(0.30 0.04 263)", borderRadius: 12 }} />
-                <Area type="monotone" dataKey="spend" stroke="oklch(0.78 0.18 165)" strokeWidth={2} fill="url(#g1)" />
-                <Area type="monotone" dataKey="results" stroke="oklch(0.66 0.22 295)" strokeWidth={2} fill="url(#g2)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          <CandlestickChart
+            data={(timeSeries ?? []) as any}
+            height={260}
+            series={[
+              {
+                key: "spend",
+                label: "Spend",
+                upColor: "oklch(0.78 0.18 165)",
+                downColor: "oklch(0.66 0.22 25)",
+                format: (v) => `$${v.toFixed(2)}`,
+              },
+              {
+                key: "results",
+                label: "Results",
+                upColor: "oklch(0.72 0.19 295)",
+                downColor: "oklch(0.66 0.22 25)",
+                format: (v) => v.toLocaleString(),
+              },
+              {
+                key: "clicks",
+                label: "Clicks",
+                upColor: "oklch(0.83 0.16 85)",
+                downColor: "oklch(0.66 0.22 25)",
+                format: (v) => v.toLocaleString(),
+              },
+            ]}
+          />
         </div>
 
         <div className="glass-card p-5">
