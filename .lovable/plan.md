@@ -1,95 +1,63 @@
-# Multiple Business Manager Support — Plan
+## লক্ষ্য
 
-## এখন কী আছে (বর্তমান অবস্থা)
+পুরো GrowVibe Ads Solution অ্যাপটিকে একটি **সম্পূর্ণ স্বয়ংসম্পূর্ণ (self-contained) WordPress** সংস্করণে রূপান্তর করা — যেখানে:
 
-এখন `app_settings` table-এ **একটাই row** আছে যেখানে রাখা হয়:
-- `fb_app_id`
-- `fb_app_secret`
-- `fb_business_id`
-- `fb_system_user_token` (একটাই long-lived token)
+- কোনো Lovable Cloud / external backend নেই, আমার কোনো access নেই
+- সব data WordPress-এর নিজস্ব MySQL ডাটাবেজে থাকবে
+- সব page, auth, Meta (Facebook) Marketing API sync — সব PHP-তে নতুন করে লেখা
+- শুধু একটা `.zip` install করলেই WordPress-এ পুরো অ্যাপ চলবে
 
-এই একটা token দিয়ে যত ad account ওই Business Manager-এ আছে — সব sync হয়। কিন্তু **অন্য BM-এর ad account** এই token দিয়ে access করা যায় না (Meta-র permission model এভাবেই কাজ করে — token সবসময় একটা BM/System User-এর সাথে bound)।
+## গুরুত্বপূর্ণ বাস্তবতা (আগে পড়ুন)
 
-## Meta-র নিয়ম (যেটা মানতেই হবে)
+বর্তমান অ্যাপটি React + ক্লাউড ডাটাবেজ (১৪টি টেবিল) + Meta Marketing API দিয়ে তৈরি। WordPress-এ এটিকে নেটিভভাবে আনতে হলে কোডটা **নতুন করে PHP-তে লিখতে হবে** — এটা কোনো "ফাইল কনভার্ট" নয়, পুরো পুনর্নির্মাণ। তাই:
 
-প্রতিটা Business Manager-এর জন্য আলাদা:
-- System User (BM Settings → Users → System Users)
-- System User Access Token (ওই BM-এর App থেকে generate)
-- App ID / App Secret (একই App use করা গেলেও সাধারণত প্রতিটা BM-এ আলাদা App থাকে)
+- WordPress **theme** শুধু চেহারা/পেজ দেখায়; ডাটাবেজ, sync, auth-এর মতো লজিক একটা **plugin**-এ থাকতে হয়। তাই ডেলিভারি হবে দুটো অংশে এক zip-এ: একটি theme + একটি companion plugin (একসাথে কাজ করবে)।
+- "Same to same" চেহারা ও ফিচার রাখব, কিন্তু এটি ধাপে ধাপে বানাতে হবে — একবারে নিখুঁত পুরোটা সম্ভব নয়, প্রতিটি ধাপ আপনি পরীক্ষা করতে পারবেন।
 
-মানে **2টা BM = 2টা আলাদা credential set**। এক token দিয়ে দুই BM cover করার কোনো legal উপায় Meta দেয় না। তাই multiple BM support করতে হলে আমাদের একাধিক credential set store করতে হবে।
+## আর্কিটেকচার
 
-এই approach-এ **data mismatch হবে না**, কারণ প্রতিটা ad account তার নিজের BM-এর token দিয়েই Graph API থেকে fetch হবে — ঠিক যেভাবে Ads Manager দেখায়।
-
-## প্রস্তাবিত Plan
-
-### 1. নতুন table: `meta_connections`
-এক row = এক Business Manager connection।
-
-Fields:
-- `id` (uuid)
-- `label` (যেমন "Main BM", "Client X BM" — admin চিনতে পারবে)
-- `fb_app_id`
-- `fb_app_secret` (encrypted, server-only read)
-- `fb_business_id`
-- `fb_system_user_token` (server-only read)
-- `token_status`, `token_scopes`, `token_user_name`, `token_expires_at`, `token_checked_at`, `token_error` (per-connection health, এখন যেমন `app_settings`-এ আছে)
-- `is_active` (boolean)
-- `created_at`, `updated_at`
-
-RLS: শুধু `admin` role select/insert/update/delete করতে পারবে। Token/secret কখনো client-এ পাঠানো হবে না — `get_settings_public()`-এর মতো একটা `get_meta_connections_public()` function থাকবে যা শুধু safe field return করবে (`has_token`, `has_secret`, label, business_id, status ইত্যাদি)।
-
-### 2. `ad_accounts` table-এ লিংক
-নতুন column `connection_id uuid references meta_connections(id)` যোগ হবে। প্রতিটা ad account জানবে সে কোন BM/token-এর under-এ। Existing row-গুলো migration-এ default connection-এ map হবে।
-
-### 3. `app_settings` থেকে BM-specific field সরানো
-- `fb_app_id`, `fb_app_secret`, `fb_business_id`, `fb_system_user_token`, এবং `token_*` field-গুলো `meta_connections`-এ migrate করা হবে (পুরাতন data থেকে প্রথম connection auto-create হবে — কিছু হারাবে না)।
-- `app_settings`-এ থাকবে শুধু global preference (sync interval, org info, brand, timezone, currency, language ইত্যাদি)।
-
-### 4. Sync logic update (`sync.server.ts`)
-এখন code একটা global token নেয়। নতুন flow:
+```text
+growvibe-wp.zip
+├── theme/growvibe-ads/        (চেহারা, লেআউট, পেজ টেমপ্লেট)
+│   ├── style.css, functions.php
+│   ├── header.php, footer.php, sidebar nav
+│   └── page templates: dashboard, clients, campaigns, ...
+└── plugin/growvibe-core/      (লজিক + ডাটা)
+    ├── growvibe-core.php       (activation: টেবিল তৈরি)
+    ├── includes/db/            (১৪টি টেবিলের schema + CRUD)
+    ├── includes/auth/          (WP user + role: admin/member)
+    ├── includes/meta-api/      (Facebook Graph API sync, PHP)
+    ├── includes/rest/          (client portal endpoints)
+    └── assets/                 (JS charts, i18n EN/বাংলা, CSS)
 ```
-for each active meta_connections:
-    token = connection.fb_system_user_token
-    accounts = fb.listAdAccounts(token, connection.fb_business_id)
-    for each account:
-        upsert ad_account with connection_id = connection.id
-        sync campaigns / adsets / ads / insights using THIS token
-```
-প্রতিটা account সবসময় তার own connection-এর token দিয়েই query হবে → **Ads Manager-এর সাথে 1:1 match**।
 
-### 5. Admin UI পরিবর্তন (`/facebook-marketing-api`)
-- "Connected" section টা list-style হবে: প্রতিটা BM card আকারে দেখাবে (label, business id, token status, account count, last sync, "Remove" button)।
-- উপরে "+ Add Business Manager" button → একটা form/modal যেখানে label, App ID, App Secret, Business ID, System User Token দেওয়া হবে। Save করলে validate (token check + list ad accounts probe) হয়ে নতুন `meta_connections` row তৈরি হবে।
-- প্রতিটা connection আলাদা ভাবে "Test" / "Sync now" / "Disable" করা যাবে।
+## ডাটাবেজ (MySQL টেবিল, plugin activation-এ তৈরি)
 
-### 6. Client creation flow (`/clients/new`)
-ad account dropdown-এ এখন সব BM-এর সব account এক list-এ দেখাবে, সাথে badge হিসেবে BM label (যাতে duplicate name confuse না করে)। Save করলে account-এর সাথে already-known `connection_id` automatically যাবে।
+বর্তমান ১৪টি টেবিল `wp_growvibe_*` প্রিফিক্সে নতুন করে তৈরি হবে:
+clients, ad_accounts, campaigns, ad_sets, ads, client_campaigns, insights_snapshots, alerts, sync_logs, meta_connections, meta_webhook_events, app_settings, profiles, user_roles। access নিয়ন্ত্রণ WordPress user + role দিয়ে (RLS-এর বদলে PHP চেক)।
 
-### 7. Portal / Dashboard
-কোনো logic পরিবর্তন **লাগবে না** — portal data ad_account → campaigns/adsets/ads/insights table থেকেই আসে, যেগুলো sync ইতিমধ্যে correct token দিয়ে populate করে রাখবে। মানে client portal হুবহু আগের মতো কাজ করবে, কোনো mismatch ছাড়াই।
+## ধাপসমূহ (প্রতিটি ধাপ আলাদাভাবে যাচাইযোগ্য)
 
-### 8. Migration safety
-- পুরাতন `app_settings`-এর BM field থেকে auto-seed হবে প্রথম `meta_connections` row (label: "Default")।
-- পুরাতন সব `ad_accounts.connection_id` ওই default connection-এ point করবে।
-- কিছু re-sync করতে হবে না, কোনো history হারাবে না।
+1. **ভিত্তি**: theme + plugin কাঠামো, activation hook, ১৪টি টেবিল তৈরি, admin/member role, লগইন।
+2. **লেআউট ও নেভিগেশন**: sidebar, header, LiveClock, ভাষা টগল (English/বাংলা), থিম/রঙ — বর্তমান চেহারা মিলিয়ে।
+3. **Settings ও Facebook Marketing API config**: App ID/Secret/Business ID/System User Token সংরক্ষণ ও টোকেন যাচাই (PHP-তে Graph API কল)।
+4. **Meta sync engine (PHP)**: ad accounts, campaigns, ad sets, ads, insights টেনে আনা; sync logs; auto-sync (wp-cron)।
+5. **মূল পেজগুলো**: Dashboard, Clients (+নতুন/রিপোর্ট), Campaigns, Ad Sets, Ads, Insights, Reports, Alerts, Budget Tracker, Sync Activity — সব ডেটাসহ।
+6. **Client Portal**: `portal/<slug>` ও `client/<slug>` পাবলিক পেজ, CSV export।
+7. **চার্ট ও পলিশ**: CandlestickChart ও অন্যান্য গ্রাফ JS-এ, রেসপনসিভ, চূড়ান্ত QA।
+8. **প্যাকেজিং**: পুরোটা একটি `.zip`-এ — WordPress-এ Themes ও Plugins-এ আপলোড করে Activate করলেই চলবে; ইনস্টল গাইডসহ।
 
-## Data mismatch কেন হবে না (Guarantee)
-1. প্রতিটা account নিজের BM-এর token দিয়ে fetch — অন্য BM-এর token দিয়ে কখনো call হবে না।
-2. Insights API call একই attribution param দিয়ে হয় (আগে যেমন) → number Ads Manager-এর সাথে match।
-3. Commission markup শুধু **display layer**-এ apply হয় — raw spend DB-তে untouched থাকে।
+## টেকনিক্যাল নোট
 
-## Technical Section (developer reference)
+- Facebook Graph API কল হবে PHP `wp_remote_get/post` দিয়ে; টোকেন WP options-এ এনক্রিপ্টেড সংরক্ষণ।
+- Auto-sync হবে `wp-cron` দিয়ে।
+- Charts: হালকা JS (Chart.js/কাস্টম canvas) — বর্তমান candlestick লুক মিলিয়ে।
+- i18n: PHP gettext নয়, বর্তমান অ্যাপের মতো কাস্টম EN/বাংলা স্ট্রিং ম্যাপ।
 
-Files যে গুলো changed হবে:
-- `supabase/migrations/*` — new `meta_connections` table + RLS + GRANT + `get_meta_connections_public()` + migrate existing `app_settings` data + add `ad_accounts.connection_id`.
-- `src/lib/fb/admin.functions.ts` — `addConnection`, `updateConnection`, `removeConnection`, `listConnections`, `testConnection` server fns।
-- `src/lib/fb/sync.server.ts` — loop over connections, per-connection token usage।
-- `src/lib/fb/permissions.server.ts` — per-connection probe।
-- `src/routes/_authenticated/facebook-marketing-api.tsx` — multi-connection UI।
-- `src/routes/_authenticated/clients_.new.tsx` — ad account dropdown grouped by BM।
+## ডেলিভারি
 
-কোনো file delete হবে না, existing client portal untouched।
+প্রতিটি বড় ধাপ শেষে অগ্রগতি জানাবো; সব শেষে একটি ডাউনলোডযোগ্য `growvibe-wp.zip` দেব ইনস্টল নির্দেশনাসহ।
 
-## আপনার সিদ্ধান্ত
-এই plan-এ যান কিনা জানান। অথবা পরিবর্তন বলেন (যেমন: token UI আরো secure চান, BM-wise sync schedule আলাদা চান, ইত্যাদি)। Approve করলে আমি migration + code change এক batch-এ করে দেব।
+## আপনার কাছে একটাই নিশ্চিতকরণ দরকার
+
+এটা বড় কাজ, ধাপে ধাপে হবে। আমি **ধাপ ১ (ভিত্তি: theme+plugin+ডাটাবেজ+লগইন)** দিয়ে এখনই শুরু করব — ঠিক আছে?
