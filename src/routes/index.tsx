@@ -19,13 +19,41 @@ function Landing() {
   const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSignedIn(!!data.session);
+    // ✅ FIX 1: Timeout যোগ করা হয়েছে — Supabase যদি connect না হয়
+    // তাহলে ৩ সেকেন্ড পরে automatically page দেখাবে
+    const timeout = setTimeout(() => {
       setChecking(false);
-    });
+    }, 3000);
+
+    // ✅ FIX 2: Error handling যোগ করা হয়েছে — connection fail হলেও
+    // blank screen এর বদলে landing page দেখাবে
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        clearTimeout(timeout);
+        setSignedIn(!!data.session);
+        setChecking(false);
+      })
+      .catch(() => {
+        clearTimeout(timeout);
+        setChecking(false);
+      });
+
+    return () => clearTimeout(timeout);
   }, []);
 
-  if (checking) return <div className="min-h-screen" />;
+  // ✅ FIX 3: Blank div এর বদলে proper loading spinner দেখাচ্ছে
+  if (checking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="size-10 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+          <p className="text-sm text-muted-foreground animate-pulse">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (signedIn) return <Navigate to="/dashboard" />;
 
   return (
