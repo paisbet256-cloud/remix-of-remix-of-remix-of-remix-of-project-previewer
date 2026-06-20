@@ -28,19 +28,19 @@ export function LiveClock() {
 
   if (!now) {
     return (
-      <div className="hidden md:flex items-center gap-2 rounded-lg border border-border/60 bg-surface/60 px-3 py-1.5 text-xs">
-        <Clock className="size-3.5 text-primary" />
+      <div className="flex items-center gap-1.5 sm:gap-2 rounded-lg border border-border/60 bg-surface/60 px-2 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs">
+        <Clock className="size-3 sm:size-3.5 text-primary" />
         <span className="font-mono tabular-nums text-muted-foreground">--:--:--</span>
       </div>
     );
   }
   const { time, date } = formatBD(now, lang);
   return (
-    <div className="hidden md:flex items-center gap-2.5 rounded-lg border border-border/60 bg-surface/60 px-3 py-1.5 text-xs">
-      <Clock className="size-3.5 text-primary animate-pulse" />
+    <div className="flex items-center gap-1.5 sm:gap-2.5 rounded-lg border border-border/60 bg-surface/60 px-2 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs">
+      <Clock className="size-3 sm:size-3.5 text-primary animate-pulse shrink-0" />
       <div className="leading-tight">
         <div className="font-mono tabular-nums font-semibold text-foreground">{time}</div>
-        <div className="text-[10px] text-muted-foreground">{date} · {t("time.bd")}</div>
+        <div className="hidden sm:block text-[10px] text-muted-foreground">{date} · {t("time.bd")}</div>
       </div>
     </div>
   );

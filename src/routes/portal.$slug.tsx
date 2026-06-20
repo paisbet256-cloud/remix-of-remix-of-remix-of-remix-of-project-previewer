@@ -203,20 +203,21 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
   const adsCount = adList.length;
   const adSetById = new Map<string, any>(adSetList.map((s) => [s.id, s]));
   const totalAdSpend = adList.reduce((a, r) => a + (Number(r.spend) || 0), 0);
+  const totalAdSetSpend = adSetList.reduce((a, r) => a + (Number(r.spend) || 0), 0);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background via-surface/40 to-background">
       {/* Top dark header */}
       <header className="bg-[oklch(0.18_0.04_262)] text-white border-b border-white/10 sticky top-0 z-30 backdrop-blur shadow-lg">
-        <div className="container mx-auto flex items-center justify-between gap-3 px-4 py-4 flex-wrap">
-          <div className="flex items-center gap-3 min-w-0">
-            <LogoMark className="size-11 shrink-0 p-1 shadow-xl" />
+        <div className="container mx-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-3 sm:flex sm:flex-wrap sm:justify-between sm:gap-3 sm:px-4 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+            <LogoMark className="size-9 sm:size-11 shrink-0 p-1 shadow-xl" />
             <div className="min-w-0">
-              <div className="font-display font-extrabold text-lg sm:text-xl lg:text-2xl tracking-tight leading-tight truncate">GrowVibe Ads Solution</div>
-              <div className="text-[12px] text-white/70 truncate"><span className="font-semibold text-white/85">{client.name}</span> · {t("portal.tagline")}</div>
+              <div className="font-display font-extrabold text-sm sm:text-xl lg:text-2xl tracking-tight leading-tight truncate">GrowVibe Ads Solution</div>
+              <div className="text-[10px] sm:text-[12px] text-white/70 truncate"><span className="font-semibold text-white/85">{client.name}</span> · {t("portal.tagline")}</div>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="col-span-2 flex items-center gap-1.5 sm:gap-2 flex-wrap justify-end sm:col-span-1">
             <LiveClock />
             <ModeToggle />
             <LanguageToggle />
@@ -224,16 +225,16 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
             <button
               onClick={() => refetch()}
               disabled={isFetching}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 px-3 py-1.5 text-xs font-semibold disabled:opacity-60 transition-all"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 px-2.5 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs font-semibold disabled:opacity-60 transition-all"
             >
-              <RefreshCw className={`size-3.5 ${isFetching ? "animate-spin" : ""}`} />
+              <RefreshCw className={`size-3 sm:size-3.5 ${isFetching ? "animate-spin" : ""}`} />
               {t("portal.refresh") ?? "Refresh"}
             </button>
           </div>
         </div>
       </header>
 
-      <main className="container mx-auto px-4 py-6 space-y-5 gv-fade-up">
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-5 gv-fade-up">
         {/* Toolbar */}
         <div className="rounded-2xl bg-card border border-border shadow-sm p-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3 flex-wrap">
@@ -274,17 +275,17 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
 
         {/* FEATURED CAMPAIGN — TOP */}
         {featured && (
-          <div className="relative overflow-hidden rounded-2xl p-6 lg:p-7 text-white shadow-xl gv-border-glow"
+          <div className="relative overflow-hidden rounded-2xl p-4 sm:p-6 lg:p-7 text-white shadow-xl gv-border-glow"
                style={{ background: "linear-gradient(135deg, oklch(0.55 0.22 265) 0%, oklch(0.48 0.24 280) 60%, oklch(0.55 0.22 320) 100%)" }}>
             <div className="absolute -top-24 -right-24 size-72 rounded-full bg-white/10 blur-3xl pointer-events-none gv-float" />
             <div className="absolute -bottom-24 -left-24 size-72 rounded-full bg-white/10 blur-3xl pointer-events-none gv-float" style={{ animationDelay: "2s" }} />
             <div className="relative">
-              <div className="text-[11px] uppercase tracking-widest font-bold text-white/80 mb-2 inline-flex items-center gap-2">
+              <div className="text-[10px] sm:text-[11px] uppercase tracking-widest font-bold text-white/80 mb-2 inline-flex items-center gap-2">
                 <span className="size-1.5 rounded-full bg-emerald-300 gv-pulse-dot" />
                 Last 7 days · Top Campaign
               </div>
-              <h2 className="text-3xl lg:text-4xl font-extrabold truncate">{featured.name || client.slug}</h2>
-              <div className="text-xs text-white/70 mt-1">Campaign ID: {featured.id?.slice(0, 8).toUpperCase()} · {featured.objective ?? "—"} · Live data</div>
+              <h2 className="text-xl sm:text-3xl lg:text-4xl font-extrabold truncate">{featured.name || client.slug}</h2>
+              <div className="text-[10px] sm:text-xs text-white/70 mt-1 truncate">Campaign ID: {featured.id?.slice(0, 8).toUpperCase()} · {featured.objective ?? "—"} · Live data</div>
               <div className="mt-5 grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <FeatureStat label="Results" value={num(featuredResults)} />
                 <FeatureStat label="Cost / Result" value={featuredResults > 0 ? cur(featuredCostPerResult) : "—"} />
@@ -397,12 +398,12 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
           </div>
         </div>
 
-        {/* ============ Ad Performance — AD level ============ */}
+        {/* ============ Ad Set Performance — AD SET level ============ */}
         <div className="rounded-2xl bg-card border border-border shadow-sm overflow-hidden gv-lift">
           <div className="px-5 py-4 border-b border-border flex items-center justify-between gap-3 flex-wrap">
             <div>
-              <div className="font-bold inline-flex items-center gap-2"><ImageIcon className="size-4 text-primary" /> Ad Performance</div>
-              <div className="text-xs text-muted-foreground mt-0.5">{adsCount} ad{adsCount !== 1 ? "s" : ""} assigned to your account</div>
+              <div className="font-bold inline-flex items-center gap-2"><ImageIcon className="size-4 text-primary" /> Ad Set Performance</div>
+              <div className="text-xs text-muted-foreground mt-0.5">{adSetsCount} ad set{adSetsCount !== 1 ? "s" : ""} assigned to your account</div>
             </div>
             <div className="size-9 grid place-items-center rounded-lg border border-border bg-surface/60">
               <BarChart3 className="size-4 text-muted-foreground" />
@@ -412,7 +413,7 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
             <table className="w-full text-sm">
               <thead className="text-[10px] uppercase tracking-wider text-muted-foreground bg-surface/60">
                 <tr>
-                  <th className="text-left px-4 py-3">Ad Name</th>
+                  <th className="text-left px-4 py-3">Ad Set Name</th>
                   <th className="text-center px-3 py-3">Status</th>
                   <th className="text-center px-3 py-3">Daily Budget</th>
                   <th className="text-center px-3 py-3">End Date</th>
@@ -429,57 +430,41 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
                 </tr>
               </thead>
               <tbody>
-                {adList.length === 0 ? (
-                  <tr><td colSpan={14} className="text-center py-12 text-muted-foreground">No ads assigned yet. Contact your agency.</td></tr>
-                ) : adList.map((a: any) => {
-                  const aSpend = Number(a.spend) || 0;
-                  const aResults = Number(a.results) || 0;
-                  const aImpr = Number(a.impressions) || 0;
-                  const adSet = a.ad_set_id ? adSetById.get(a.ad_set_id) : null;
-                  const dailyBudget = adSet?.daily_budget ? Number(adSet.daily_budget) : 0;
-                  const endTime = adSet?.end_time;
-                  const goal = adSet?.optimization_goal ?? "";
+                {adSetList.length === 0 ? (
+                  <tr><td colSpan={14} className="text-center py-12 text-muted-foreground">No ad sets assigned yet. Contact your agency.</td></tr>
+                ) : adSetList.map((s: any) => {
+                  const aSpend = Number(s.spend) || 0;
+                  const aResults = Number(s.results) || 0;
+                  const aImpr = Number(s.impressions) || 0;
+                  const dailyBudget = s.daily_budget ? Number(s.daily_budget) : 0;
+                  const endTime = s.end_time;
+                  const goal = s.optimization_goal ?? "";
                   const resultRateAd = aImpr > 0 ? (aResults / aImpr) * 100 : 0;
-                  const spendPct = totalAdSpend > 0 ? (aSpend / totalAdSpend) * 100 : 0;
+                  const spendPct = totalAdSetSpend > 0 ? (aSpend / totalAdSetSpend) * 100 : 0;
                   const goalLabel = goalToLabel(goal);
                   return (
-                    <tr key={a.id} className="border-t border-border/60 hover:bg-surface/40 transition-colors">
+                    <tr key={s.id} className="border-t border-border/60 hover:bg-surface/40 transition-colors">
                       <td className="px-4 py-3 max-w-[280px]">
-                        <div className="flex items-center gap-3">
-                          <div className="size-10 shrink-0 rounded-md overflow-hidden bg-surface border border-border grid place-items-center">
-                            {a.creative_thumbnail
-                              ? <img src={a.creative_thumbnail} alt="" className="w-full h-full object-cover" loading="lazy" />
-                              : <ImageIcon className="size-4 text-muted-foreground" />}
-                          </div>
-                          <div className="min-w-0">
-                            <div className="font-semibold truncate">{a.name}</div>
-                            <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-[10px] text-muted-foreground tabular-nums">{a.fb_ad_id?.slice(0, 16) ?? ""}</span>
-                              {a.preview_link && (
-                                <a href={a.preview_link} target="_blank" rel="noreferrer"
-                                   className="text-[10px] font-semibold rounded-full px-2 py-0.5 bg-primary/10 text-primary hover:bg-primary/20 transition-colors inline-flex items-center gap-1">
-                                  <ExternalLink className="size-2.5" /> Preview
-                                </a>
-                              )}
-                            </div>
-                          </div>
+                        <div className="min-w-0">
+                          <div className="font-semibold truncate">{s.name}</div>
+                          <div className="text-[10px] text-muted-foreground tabular-nums mt-0.5">{(s.id ?? "").toString().slice(0, 16)}</div>
                         </div>
                       </td>
                       <td className="px-3 py-3 text-center">
                         <span className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase rounded-full px-2.5 py-1 ${
-                          a.effective_status === "ACTIVE" ? "bg-emerald-500/15 text-emerald-500" :
-                          a.effective_status === "PAUSED" ? "bg-amber-500/15 text-amber-500" :
+                          s.effective_status === "ACTIVE" ? "bg-emerald-500/15 text-emerald-500" :
+                          s.effective_status === "PAUSED" ? "bg-amber-500/15 text-amber-500" :
                           "bg-muted/40 text-muted-foreground"
                         }`}>
-                          {a.effective_status ?? "—"}
+                          {s.effective_status ?? "—"}
                         </span>
                       </td>
                       <td className="px-3 py-3 text-center tabular-nums">{dailyBudget > 0 ? dcur(dailyBudget) : "—"}</td>
                       <td className="px-3 py-3 text-center text-xs text-muted-foreground">{formatEndDate(endTime)}</td>
                       <td className="px-3 py-3 text-center font-bold tabular-nums">{dcur(aSpend)}</td>
                       <td className="px-3 py-3 text-center tabular-nums">{num(aImpr)}</td>
-                      <td className="px-3 py-3 text-center tabular-nums">{num(Number(a.reach) || 0)}</td>
-                      <td className="px-3 py-3 text-center tabular-nums">{Number(a.ctr || 0).toFixed(2)}%</td>
+                      <td className="px-3 py-3 text-center tabular-nums">{num(Number(s.reach) || 0)}</td>
+                      <td className="px-3 py-3 text-center tabular-nums">{Number(s.ctr || 0).toFixed(2)}%</td>
                       <td className="px-3 py-3 text-center tabular-nums">{aImpr > 0 ? `${resultRateAd.toFixed(2)}%` : "—"}</td>
                       <td className="px-3 py-3 text-center">
                         <div className="font-bold tabular-nums">{num(aResults)}</div>
