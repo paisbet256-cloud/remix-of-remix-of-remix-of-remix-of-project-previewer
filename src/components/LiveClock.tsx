@@ -9,10 +9,7 @@ function formatBD(d: Date, lang: "en" | "bn") {
     hour: "2-digit", minute: "2-digit", second: "2-digit",
     hour12: true, timeZone: "Asia/Dhaka",
   }).format(d);
-  const date = new Intl.DateTimeFormat(locale, {
-    weekday: "short", day: "2-digit", month: "short",
-    timeZone: "Asia/Dhaka",
-  }).format(d);
+  
   return { time, date };
 }
 
