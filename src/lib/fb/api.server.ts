@@ -1,10 +1,5 @@
 // Facebook Marketing Graph API helpers — SERVER ONLY.
 // This file is suffixed `.server.ts` so the bundler refuses any client import.
-//
-// Real-time data strategy:
-//   Facebook's Insights API supports time-based polling. We sync every N minutes
-//   from a server cron job, using a long-lived System User access token stored
-//   in app_settings. Token never leaves the server.
 
 const GRAPH_VERSION = "v21.0";
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
@@ -185,7 +180,7 @@ export const fb = {
     return fbFetchAll(`/${actId}/insights`, {
       level,
       date_preset: datePreset,
-      fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,actions,date_start,date_stop",
+      fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,actions,optimization_goal,date_start,date_stop",
       limit: "500",
       ...INSIGHTS_ATTRIBUTION_PARAMS,
     }, token);
@@ -212,15 +207,79 @@ export const fb = {
     else params.date_preset = datePreset;
     return fbFetchAll(`/${actId}/insights`, params, token);
   },
+  // NEW — Per-campaign time series for an ad account, optionally filtered to a
+  // specific set of campaign IDs. This is what the portal uses when the client
+  // has assigned campaigns, so totals only include their campaigns instead of
+  // the entire ad account's history.
+  async getCampaignTimeSeries(actId: string, token: string, fbCampaignIds: string[], datePreset = "last_30d") {
+    const params: Record<string, string> = {
+      level: "campaign",
+      time_increment: "1",
+      fields: "campaign_id,campaign_name,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,actions,optimization_goal,date_start,date_stop",
+      limit: "500",
+      ...INSIGHTS_ATTRIBUTION_PARAMS,
+    };
+    if (fbCampaignIds.length > 0) {
+      params.filtering = JSON.stringify([
+        { field: "campaign.id", operator: "IN", value: fbCampaignIds },
+      ]);
+    }
+    if (datePreset === "last_30d") params.time_range = recentRangeThroughToday(30);
+    else params.date_preset = datePreset;
+    return fbFetchAll(`/${actId}/insights`, params, token);
+  },
 };
 
-export function extractPrimaryResults(actions: any[] | undefined): number {
-  if (!actions || !Array.isArray(actions)) return 0;
-  // Mirror Meta Ads Manager's Results column for common objectives first.
-  const priority = [
+// Pick the "Results" number that mirrors what Meta Ads Manager shows.
+// When optimizationGoal is known, prefer that family's action types first.
+// Crucially we DO NOT fall back to link_click for generic objectives — that
+// was making messaging campaigns report Clicks as Results.
+export function extractPrimaryResults(actions: any[] | undefined, optimizationGoal?: string | null): number {
+  if (!actions || !Array.isArray(actions) || actions.length === 0) return 0;
+
+  const goal = (optimizationGoal ?? "").toUpperCase();
+  const find = (t: string) => {
+    const a = actions.find((x) => x.action_type === t);
+    return a ? Number(a.value) || 0 : null;
+  };
+
+  // Goal-aware priority
+  const goalOrder: string[] = [];
+  if (goal.includes("CONVERSATION") || goal.includes("MESSAGE") || goal.includes("REPLIES")) {
+    goalOrder.push(
+      "onsite_conversion.messaging_conversation_started_7d",
+      "onsite_conversion.total_messaging_connection",
+      "onsite_conversion.messaging_first_reply",
+      "messaging_conversation_started",
+    );
+  } else if (goal.includes("LEAD")) {
+    goalOrder.push("onsite_conversion.lead_grouped", "lead", "offsite_conversion.fb_pixel_lead");
+  } else if (goal.includes("PURCHASE") || goal.includes("VALUE")) {
+    goalOrder.push("offsite_conversion.fb_pixel_purchase", "purchase", "omni_purchase");
+  } else if (goal.includes("REGISTRATION") || goal.includes("COMPLETE_REGISTRATION")) {
+    goalOrder.push("complete_registration", "offsite_conversion.fb_pixel_complete_registration");
+  } else if (goal.includes("LINK_CLICK") || goal === "LINK_CLICKS") {
+    goalOrder.push("link_click");
+  } else if (goal.includes("LANDING_PAGE")) {
+    goalOrder.push("landing_page_view");
+  } else if (goal.includes("VIDEO")) {
+    goalOrder.push("video_view");
+  } else if (goal.includes("ENGAGEMENT") || goal.includes("POST_ENGAGEMENT")) {
+    goalOrder.push("post_engagement", "page_engagement");
+  }
+
+  for (const t of goalOrder) {
+    const v = find(t);
+    if (v !== null) return v;
+  }
+
+  // Generic fallback — same as Meta's "Results" column when goal is unknown.
+  // NOTE: link_click is intentionally NOT here. If a non-link campaign has no
+  // matching action it should show 0, not its click count.
+  const generic = [
     "onsite_conversion.messaging_conversation_started_7d",
-    "onsite_conversion.messaging_first_reply",
     "onsite_conversion.total_messaging_connection",
+    "onsite_conversion.messaging_first_reply",
     "messaging_conversation_started",
     "onsite_conversion.lead_grouped",
     "lead",
@@ -228,13 +287,12 @@ export function extractPrimaryResults(actions: any[] | undefined): number {
     "offsite_conversion.fb_pixel_purchase",
     "purchase",
     "complete_registration",
-    "link_click",
   ];
-  for (const t of priority) {
-    const a = actions.find((x) => x.action_type === t);
-    if (a) return Number(a.value) || 0;
+  for (const t of generic) {
+    const v = find(t);
+    if (v !== null) return v;
   }
-  return Number(actions[0]?.value) || 0;
+  return 0;
 }
 
 export function normalizeActId(s: string): string {

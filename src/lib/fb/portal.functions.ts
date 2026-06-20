@@ -2,13 +2,10 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 // Public server fns for the client portal (/portal/:slug).
-// When client.portal_token is set, the caller must present the matching token —
-// this is how we verify client ownership beyond a guessable slug.
 
 async function loadClientWithAuth(slug: string, token?: string) {
   const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const code = slug.toUpperCase();
-  // Try client_code first (uppercase codes like BZJECYGM), then slug.
   let { data: client, error } = await supabaseAdmin
     .from("clients")
     .select("id,name,slug,client_code,company,logo_url,brand_color,status,monthly_budget,deposit_amount,deposit_currency,bdt_rate,portal_token,commission_enabled,commission_percent")
@@ -73,17 +70,19 @@ export const getClientPortalData = createServerFn({ method: "POST" })
     let campaigns: any[] = [];
     let adSets: any[] = [];
     let ads: any[] = [];
+    // fb_campaign_id list for scoping live time-series to assigned campaigns
+    let assignedFbCampaignIds: string[] = [];
 
     if (assignedCampaignIds.length) {
       const { data: assignedCampaigns } = await supabaseAdmin
         .from("campaigns")
-        .select("id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
+        .select("id,fb_campaign_id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
         .in("id", assignedCampaignIds)
         .order("spend", { ascending: false })
         .limit(50);
       campaigns = assignedCampaigns ?? [];
+      assignedFbCampaignIds = campaigns.map((c: any) => c.fb_campaign_id).filter(Boolean);
 
-      // Ad Sets for the assigned campaigns — this is the ad-set-level data shown in the table
       const { data: assignedAdSets } = await supabaseAdmin
         .from("ad_sets")
         .select("id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
@@ -120,7 +119,7 @@ export const getClientPortalData = createServerFn({ method: "POST" })
       if (accountIds.length) {
         const [{ data: accountCampaigns }, { data: accountAdSets }, { data: accountAds }] = await Promise.all([
           supabaseAdmin.from("campaigns")
-            .select("id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
+            .select("id,fb_campaign_id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
             .in("ad_account_id", accountIds).order("spend", { ascending: false }).limit(50),
           supabaseAdmin.from("ad_sets")
             .select("id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
@@ -137,6 +136,10 @@ export const getClientPortalData = createServerFn({ method: "POST" })
 
     const accountIds = accounts.map((a) => a.id);
 
+    // Time series — scoping rules:
+    //   * Client has assigned campaigns → live per-campaign time series filtered
+    //     to ONLY their campaigns (matches Ads Manager numbers exactly).
+    //   * No assignments → account-level time series (whole ad account).
     let liveTimeSeries: any[] | null = null;
     if (accounts.length > 0) {
       try {
@@ -150,8 +153,19 @@ export const getClientPortalData = createServerFn({ method: "POST" })
         for (const account of accounts) {
           const token = await getTokenForPortalAccount(supabaseAdmin, account, settings?.fb_system_user_token);
           if (!token) continue;
-          const rows = await fb.getTimeSeries(account.fb_account_id, token, "last_30d");
-          liveRows.push(...rows.map((row: any) => ({ ...row, ad_account_id: account.id })));
+          if (assignedFbCampaignIds.length > 0) {
+            // Only campaigns belonging to THIS account
+            const acctCampaignFbIds = campaigns
+              .filter((c: any) => c.ad_account_id === account.id)
+              .map((c: any) => c.fb_campaign_id)
+              .filter(Boolean);
+            if (acctCampaignFbIds.length === 0) continue;
+            const rows = await fb.getCampaignTimeSeries(account.fb_account_id, token, acctCampaignFbIds, "last_30d");
+            liveRows.push(...rows.map((row: any) => ({ ...row, ad_account_id: account.id })));
+          } else {
+            const rows = await fb.getTimeSeries(account.fb_account_id, token, "last_30d");
+            liveRows.push(...rows.map((row: any) => ({ ...row, ad_account_id: account.id })));
+          }
         }
         liveTimeSeries = liveRows;
       } catch (e) {
@@ -159,12 +173,38 @@ export const getClientPortalData = createServerFn({ method: "POST" })
       }
     }
 
-    const [{ data: timeSeries }, { data: alerts }] = await Promise.all([
-      accountIds.length
-        ? supabaseAdmin.from("insights_snapshots").select("ad_account_id,date_start,spend,reach,impressions,clicks,results").in("ad_account_id", accountIds).eq("level", "account").gte("date_start", new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10)).order("date_start", { ascending: true })
-        : Promise.resolve({ data: [] as any[] }),
-      supabaseAdmin.from("alerts").select("id,type,severity,title,message,created_at").eq("client_id", client.id).order("created_at", { ascending: false }).limit(15),
-    ]);
+    // DB fallback time series — also scoped to assigned campaigns when applicable.
+    let dbTimeSeries: any[] = [];
+    if (accountIds.length) {
+      const sinceStr = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+      if (assignedFbCampaignIds.length > 0) {
+        const { data: ts } = await supabaseAdmin
+          .from("insights_snapshots")
+          .select("ad_account_id,date_start,spend,reach,impressions,clicks,results,entity_id")
+          .in("ad_account_id", accountIds)
+          .eq("level", "campaign")
+          .in("entity_id", assignedFbCampaignIds)
+          .gte("date_start", sinceStr)
+          .order("date_start", { ascending: true });
+        dbTimeSeries = ts ?? [];
+      } else {
+        const { data: ts } = await supabaseAdmin
+          .from("insights_snapshots")
+          .select("ad_account_id,date_start,spend,reach,impressions,clicks,results")
+          .in("ad_account_id", accountIds)
+          .eq("level", "account")
+          .gte("date_start", sinceStr)
+          .order("date_start", { ascending: true });
+        dbTimeSeries = ts ?? [];
+      }
+    }
+
+    const { data: alerts } = await supabaseAdmin
+      .from("alerts")
+      .select("id,type,severity,title,message,created_at")
+      .eq("client_id", client.id)
+      .order("created_at", { ascending: false })
+      .limit(15);
 
     // Strip portal_token — never expose it.
     const { portal_token: _t, ...clientPub } = client as any;
@@ -178,7 +218,7 @@ export const getClientPortalData = createServerFn({ method: "POST" })
       adSets,
       ads,
       assignedCampaignIds,
-      timeSeries: liveTimeSeries ?? timeSeries ?? [],
+      timeSeries: (liveTimeSeries && liveTimeSeries.length > 0) ? liveTimeSeries : dbTimeSeries,
       alerts: alerts ?? [],
     };
   });
@@ -197,17 +237,34 @@ export const getClientInsightsForExport = createServerFn({ method: "POST" })
     if ("forbidden" in r) return { forbidden: true as const };
     const { client, supabaseAdmin } = r;
 
+    // Scope the export to assigned campaigns when present (same as portal view).
+    const { data: assigned } = await supabaseAdmin
+      .from("client_campaigns").select("campaign_id").eq("client_id", client.id);
+    const assignedIds = (assigned ?? []).map((a) => a.campaign_id);
+
     const { data: accounts } = await supabaseAdmin
       .from("ad_accounts").select("id,fb_account_id,account_name,currency").eq("client_id", client.id).eq("is_active", true);
     const ids = (accounts ?? []).map((a) => a.id);
-    if (!ids.length) return { forbidden: false as const, rows: [] as any[] };
+    if (!ids.length && !assignedIds.length) return { forbidden: false as const, rows: [] as any[] };
     const acctById = new Map((accounts ?? []).map((a) => [a.id, a]));
 
     const table = data.level === "campaign" ? "campaigns" : data.level === "adset" ? "ad_sets" : "ads";
-    const { data: rows } = await supabaseAdmin.from(table)
-      .select("ad_account_id,name,effective_status,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
-      .in("ad_account_id", ids)
+
+    let query = supabaseAdmin.from(table)
+      .select("ad_account_id,campaign_id,name,effective_status,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
       .order("spend", { ascending: false });
+
+    if (assignedIds.length) {
+      if (data.level === "campaign") {
+        query = query.in("id", assignedIds);
+      } else {
+        query = query.in("campaign_id", assignedIds);
+      }
+    } else if (ids.length) {
+      query = query.in("ad_account_id", ids);
+    }
+
+    const { data: rows } = await query;
 
     const enriched = (rows ?? []).map((r: any) => {
       const acct: any = acctById.get(r.ad_account_id);
@@ -225,9 +282,6 @@ export const getClientInsightsForExport = createServerFn({ method: "POST" })
   });
 
 // Trigger a fresh Meta sync for all ad accounts attached to a client/portal slug.
-// Debounced: skips accounts whose last_sync_at < `minAgeSec` ago, so calling this
-// every page load is safe. Returns immediately even if sync is still running in
-// the background for large accounts — the realtime channel will pick up updates.
 export const triggerClientSync = createServerFn({ method: "POST" })
   .inputValidator((d: { slug: string; token?: string; minAgeSec?: number; force?: boolean }) =>
     z.object({
@@ -242,7 +296,6 @@ export const triggerClientSync = createServerFn({ method: "POST" })
     if ("forbidden" in r) return { ok: false as const, reason: "forbidden" as const };
     const { client, supabaseAdmin } = r;
 
-    // Resolve the relevant ad accounts (same scoping rule as getClientPortalData).
     const { data: assigned } = await supabaseAdmin
       .from("client_campaigns").select("campaign_id").eq("client_id", client.id);
     const assignedIds = (assigned ?? []).map((a) => a.campaign_id);
@@ -269,7 +322,6 @@ export const triggerClientSync = createServerFn({ method: "POST" })
     );
     if (!toSync.length) return { ok: true as const, synced: 0, skipped: accountIds.length };
 
-    // Fire-and-await — keep latency acceptable but ensure DB is fresh before returning.
     const { syncAdAccount } = await import("./sync.server");
     const results = await Promise.allSettled(toSync.map((a) => syncAdAccount(a.id)));
     const okCount = results.filter((r) => r.status === "fulfilled").length;

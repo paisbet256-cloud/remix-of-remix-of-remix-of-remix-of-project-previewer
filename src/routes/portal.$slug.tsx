@@ -112,7 +112,7 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
       .on("postgres_changes", { event: "*", schema: "public", table: "alerts" }, () => refetch())
       .subscribe();
     return () => { supabase.removeChannel(ch); };
-  }, [slug, refetch]);
+  }, [slug, token, refetch]);
 
   // Filter timeSeries by selected range
   const rangeDays = range === "today" ? 1 : range === "7d" ? 7 : range === "30d" ? 30 : range === "month" ? new Date().getDate() : 9999;
@@ -416,10 +416,10 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
             <SnapCell label="Frequency"       value={totals.frequency > 0 ? totals.frequency.toFixed(2) : "—"}      icon={<Repeat className="size-3.5" />} />
             <SnapCell label="CPM"             value={totals.impressions > 0 ? cur(cpm) : "—"}                       icon={<CircleDollarSign className="size-3.5" />} />
             <SnapCell label="CPC"             value={totals.clicks > 0 ? cur(cpc) : "—"}                            icon={<MousePointer className="size-3.5" />} />
-            <SnapCell label="Link Clicks"     value={num(totals.clicks)}                                            icon={<MousePointerClick className="size-3.5" />} />
+            <SnapCell label="Clicks"          value={num(totals.clicks)}                                            icon={<MousePointerClick className="size-3.5" />} />
             <SnapCell label="CTR"             value={`${ctr.toFixed(2)}%`}                                          icon={<Percent className="size-3.5" />} />
             <SnapCell label="Result Rate"     value={totals.impressions > 0 ? `${resultRate.toFixed(2)}%` : "—"}    icon={<TrendingUp className="size-3.5" />} />
-            <SnapCell label="Outbound Clicks" value={num(totals.clicks)}                                            icon={<ExternalLink className="size-3.5" />} />
+
           </div>
         </div>
 
@@ -806,9 +806,10 @@ function formatEndDate(end?: string | null): string {
     const d = new Date(end);
     if (isNaN(d.getTime())) return "—";
     return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
-  } catch { return "—"; }
+  } catch {
+    return "—";
+  }
 }
-
 function NotFoundCard({ reason }: { reason: "not-found" | "forbidden" }) {
   return (
     <div className="min-h-screen grid place-items-center px-4">

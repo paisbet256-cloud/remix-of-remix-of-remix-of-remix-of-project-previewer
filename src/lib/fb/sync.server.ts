@@ -8,7 +8,6 @@ async function getLegacyToken(): Promise<string | null> {
   return data?.fb_system_user_token ?? null;
 }
 
-// Resolve token for a specific ad account — prefer per-connection token, fall back to legacy app_settings.
 async function getTokenForAccount(accountId: string): Promise<string> {
   const { data: acc } = await supabaseAdmin
     .from("ad_accounts")
@@ -27,7 +26,6 @@ async function getTokenForAccount(accountId: string): Promise<string> {
   if (legacy) return legacy;
   throw new Error("No Facebook System User token configured for this ad account");
 }
-
 
 async function importVisibleAccountsForSync(token: string) {
   const { data: settings } = await supabaseAdmin.from("app_settings").select("fb_business_id").eq("id", 1).maybeSingle();
@@ -95,26 +93,31 @@ export async function syncAdAccount(adAccountId: string) {
       itemsSynced += campaigns.length;
     }
 
+    // Capture optimization_goal per ad set so we can map "Results" correctly.
     const adSets = await fb.listAdSets(actId, token);
+    const adSetGoalByFbId = new Map<string, string>();
     if (adSets.length > 0) {
       const { data: cps } = await supabaseAdmin.from("campaigns").select("id,fb_campaign_id").eq("ad_account_id", account.id);
       const cpMap = new Map((cps ?? []).map((c) => [c.fb_campaign_id, c.id]));
-      const rows = adSets.filter((a: any) => cpMap.has(a.campaign_id)).map((a: any) => ({
-        campaign_id: cpMap.get(a.campaign_id)!,
-        ad_account_id: account.id,
-        fb_adset_id: a.id,
-        name: a.name,
-        status: a.status ?? null,
-        effective_status: a.effective_status ?? null,
-        daily_budget: a.daily_budget ? Number(a.daily_budget) / 100 : null,
-        lifetime_budget: a.lifetime_budget ? Number(a.lifetime_budget) / 100 : null,
-        optimization_goal: a.optimization_goal ?? null,
-        billing_event: a.billing_event ?? null,
-        bid_amount: a.bid_amount ? Number(a.bid_amount) / 100 : null,
-        start_time: a.start_time ?? null,
-        end_time: a.end_time ?? null,
-        last_sync_at: new Date().toISOString(),
-      }));
+      const rows = adSets.filter((a: any) => cpMap.has(a.campaign_id)).map((a: any) => {
+        if (a.optimization_goal) adSetGoalByFbId.set(a.id, a.optimization_goal);
+        return {
+          campaign_id: cpMap.get(a.campaign_id)!,
+          ad_account_id: account.id,
+          fb_adset_id: a.id,
+          name: a.name,
+          status: a.status ?? null,
+          effective_status: a.effective_status ?? null,
+          daily_budget: a.daily_budget ? Number(a.daily_budget) / 100 : null,
+          lifetime_budget: a.lifetime_budget ? Number(a.lifetime_budget) / 100 : null,
+          optimization_goal: a.optimization_goal ?? null,
+          billing_event: a.billing_event ?? null,
+          bid_amount: a.bid_amount ? Number(a.bid_amount) / 100 : null,
+          start_time: a.start_time ?? null,
+          end_time: a.end_time ?? null,
+          last_sync_at: new Date().toISOString(),
+        };
+      });
       if (rows.length > 0) {
         const { error: e2 } = await supabaseAdmin.from("ad_sets").upsert(rows, { onConflict: "fb_adset_id" });
         if (e2) throw new Error(`ad_sets upsert: ${e2.message}`);
@@ -147,19 +150,13 @@ export async function syncAdAccount(adAccountId: string) {
       itemsSynced += rows.length;
     }
 
-    // Meta Ads Manager's entity tables commonly use the selected account range
-    // (the user's screenshot is "Maximum"). Store lifetime/maximum entity totals
-    // so Campaigns, Ad Sets, Ads, and client portals match Ads Manager instead
-    // of accidentally showing 0 for ads that spent only today/outside last_30d.
+    // Entity tables show MAXIMUM range to match Ads Manager's default.
     const acctInsights = await fb.getAccountInsights(actId, token, "maximum");
     const campInsights = await fb.getInsights(actId, token, "maximum", "campaign");
     const asInsights = await fb.getInsights(actId, token, "maximum", "adset");
     const adInsights = await fb.getInsights(actId, token, "maximum", "ad");
 
-    // CRITICAL: Reset all metrics for this account's entities BEFORE applying
-    // fresh insights. Otherwise campaigns/adsets/ads that fell out of the
-    // last_30d window keep stale spend/reach/etc, and SUM(child.spend) ends up
-    // larger than the account-level total reported by Facebook.
+    // Reset metrics first so entities that fell out of range don't keep stale numbers.
     const zeroMetrics = {
       spend: 0, reach: 0, impressions: 0, clicks: 0,
       ctr: 0, cpc: 0, cpm: 0, frequency: 0, results: 0,
@@ -179,7 +176,7 @@ export async function syncAdAccount(adAccountId: string) {
           cpc: Number(row.cpc) || 0,
           cpm: Number(row.cpm) || 0,
           frequency: Number(row.frequency) || 0,
-          results: extractPrimaryResults(row.actions),
+          results: extractPrimaryResults(row.actions, row.optimization_goal),
         }).eq("fb_campaign_id", row.campaign_id).eq("ad_account_id", account.id);
       }
     }
@@ -194,12 +191,14 @@ export async function syncAdAccount(adAccountId: string) {
           cpc: Number(row.cpc) || 0,
           cpm: Number(row.cpm) || 0,
           frequency: Number(row.frequency) || 0,
-          results: extractPrimaryResults(row.actions),
+          results: extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id)),
         }).eq("fb_adset_id", row.adset_id).eq("ad_account_id", account.id);
       }
     }
     if (adInsights.length > 0) {
       for (const row of adInsights as any[]) {
+        // Ads inherit goal from their ad set.
+        const goal = row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id);
         await supabaseAdmin.from("ads").update({
           spend: Number(row.spend) || 0,
           reach: Number(row.reach) || 0,
@@ -209,7 +208,7 @@ export async function syncAdAccount(adAccountId: string) {
           cpc: Number(row.cpc) || 0,
           cpm: Number(row.cpm) || 0,
           frequency: Number(row.frequency) || 0,
-          results: extractPrimaryResults(row.actions),
+          results: extractPrimaryResults(row.actions, goal),
         }).eq("fb_ad_id", row.ad_id).eq("ad_account_id", account.id);
       }
     }
@@ -218,8 +217,7 @@ export async function syncAdAccount(adAccountId: string) {
     snapshotSince.setUTCDate(snapshotSince.getUTCDate() - 29);
     const snapshotSinceStr = snapshotSince.toISOString().slice(0, 10);
 
-    // Replace the rolling daily window completely. If Meta returns only 2 real
-    // spend days, old cached rows must disappear or Last 7 Days becomes inflated.
+    // Replace the rolling daily window — account level.
     await supabaseAdmin
       .from("insights_snapshots")
       .delete()
@@ -246,6 +244,40 @@ export async function syncAdAccount(adAccountId: string) {
         results: extractPrimaryResults(r.actions),
       }));
       await supabaseAdmin.from("insights_snapshots").upsert(tsRows, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
+    }
+
+    // Also store PER-CAMPAIGN daily snapshots so the portal can scope totals
+    // to only the campaigns assigned to a given client (not the whole account).
+    await supabaseAdmin
+      .from("insights_snapshots")
+      .delete()
+      .eq("ad_account_id", account.id)
+      .eq("level", "campaign")
+      .gte("date_start", snapshotSinceStr);
+
+    const campTs = await fb.getCampaignTimeSeries(actId, token, [], "last_30d");
+    if (campTs.length > 0) {
+      const campTsRows = (campTs as any[]).map((r) => ({
+        ad_account_id: account.id,
+        level: "campaign" as const,
+        entity_id: r.campaign_id,
+        date_start: r.date_start,
+        date_stop: r.date_stop,
+        spend: Number(r.spend) || 0,
+        reach: Number(r.reach) || 0,
+        impressions: Number(r.impressions) || 0,
+        clicks: Number(r.clicks) || 0,
+        ctr: Number(r.ctr) || 0,
+        cpc: Number(r.cpc) || 0,
+        cpm: Number(r.cpm) || 0,
+        frequency: Number(r.frequency) || 0,
+        results: extractPrimaryResults(r.actions, r.optimization_goal),
+      }));
+      // Insert in chunks of 500 to stay safe on payload size.
+      for (let i = 0; i < campTsRows.length; i += 500) {
+        const chunk = campTsRows.slice(i, i + 500);
+        await supabaseAdmin.from("insights_snapshots").upsert(chunk, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
+      }
     }
 
     const activeCampaigns = campaigns.filter((c: any) => c.effective_status === "ACTIVE").length;
@@ -298,7 +330,6 @@ export async function syncAdAccount(adAccountId: string) {
 }
 
 export async function syncAllAccounts() {
-  // 1. Validate token + scopes BEFORE any sync work — fail fast if broken.
   const health = await checkTokenHealth();
   if (!health.ok && (health.status === "invalid" || health.status === "missing")) {
     return { count: 0, results: [], skipped: true, tokenHealth: health };
@@ -311,7 +342,6 @@ export async function syncAllAccounts() {
     .eq("is_active", true);
   const autoImport = existingCount === 0 && legacyToken ? await importVisibleAccountsForSync(legacyToken) : { imported: 0 };
 
-
   const { data: accounts } = await supabaseAdmin.from("ad_accounts").select("id,client_id").eq("is_active", true);
   const results: Array<{ id: string; ok: boolean; error?: string | null }> = [];
   for (const a of accounts ?? []) {
@@ -323,7 +353,6 @@ export async function syncAllAccounts() {
     }
   }
 
-  // 2. Evaluate budget pacing alerts (per client)
   try {
     await evaluateBudgetAlerts();
   } catch (e) {
@@ -368,7 +397,6 @@ async function evaluateBudgetAlerts() {
       await emit("budget_75", "warning", `${c.name}: 75% of monthly budget used`,
         `Spent ${spent.toFixed(2)} of ${budget.toFixed(2)} (${pct.toFixed(1)}%).`);
     }
-    // Pacing — running ahead by 20pp
     if (pct - expectedPct >= 20) {
       await emit("pacing_ahead", "warning", `${c.name}: spend pacing ahead of schedule`,
         `Actual ${pct.toFixed(1)}% vs expected ${expectedPct.toFixed(1)}% by today.`);
@@ -376,7 +404,6 @@ async function evaluateBudgetAlerts() {
   }
 }
 
-// Sync all ad accounts belonging to a specific Business Manager connection.
 export async function syncConnectionAccounts(connectionId: string) {
   const { data: accounts } = await supabaseAdmin
     .from("ad_accounts")
