@@ -5,11 +5,11 @@ import { D as redirect, c as lazyRouteComponent, d as Link, h as useRouter, l as
 import { t as Route$18 } from "./campaigns-CLzYqQNT.mjs";
 import { t as QueryClient } from "../_libs/tanstack__query-core.mjs";
 import { t as Toaster } from "../_libs/sonner.mjs";
-import { t as Route$19 } from "./clients_._slug.report-CdQK7wTL.mjs";
+import { t as Route$19 } from "./clients_._slug.report-7zYfZm78.mjs";
 import { o as ThemeProvider, t as I18nProvider } from "./LiveClock-B_2daxln.mjs";
 import { t as Route$20 } from "./portal._slug-BS9oLLT8.mjs";
 import { createHmac, timingSafeEqual } from "node:crypto";
-//#region node_modules/.nitro/vite/services/ssr/assets/router-DdEjU4we.js
+//#region node_modules/.nitro/vite/services/ssr/assets/router-HbQfst91.js
 var import_react = /* @__PURE__ */ __toESM(require_react());
 var import_jsx_runtime = require_jsx_runtime();
 var styles_default = "/assets/styles-DuOoFIWw.css";

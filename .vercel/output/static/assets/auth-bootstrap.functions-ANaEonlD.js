@@ -1,0 +1,1 @@
+import{H as e,R as t}from"./index-D7vWi8xs.js";import{t as n}from"./auth-middleware-DxuTfWmq.js";var r=t({method:`POST`}).middleware([n]).handler(e(`94b83918aaca2733c568f73b7a7671bd63ecfca89e1fba55a4460c3262b3279a`));export{r as t};

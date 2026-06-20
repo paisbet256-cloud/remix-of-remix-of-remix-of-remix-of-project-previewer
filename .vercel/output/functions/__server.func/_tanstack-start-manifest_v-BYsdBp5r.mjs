@@ -1,4 +1,4 @@
-//#region node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-CWebt5TH.js
+//#region node_modules/.nitro/vite/services/ssr/assets/_tanstack-start-manifest_v-BYsdBp5r.js
 var tsrStartManifest = () => ({
 	routes: {
 		__root__: {
@@ -13,7 +13,7 @@ var tsrStartManifest = () => ({
 			],
 			assets: void 0,
 			preloads: [
-				"/assets/index-Kt57t2bO.js",
+				"/assets/index-D7vWi8xs.js",
 				"/assets/createLucideIcon-C8pUvK1-.js",
 				"/assets/link-7QDXcDXO.js",
 				"/assets/matchContext-Bz0iFDM-.js",
@@ -28,7 +28,7 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/routes-B__x-1pj.js",
+				"/assets/routes-CUK307vN.js",
 				"/assets/activity-D0ms_CdN.js",
 				"/assets/chart-column-CtaVAa8x.js",
 				"/assets/trending-up-CPRoY2g_.js",
@@ -55,7 +55,7 @@ var tsrStartManifest = () => ({
 			],
 			assets: void 0,
 			preloads: [
-				"/assets/route-Ct3pbRsZ.js",
+				"/assets/route-Ck35QvYo.js",
 				"/assets/useServerFn-CGzw7Lur.js",
 				"/assets/activity-D0ms_CdN.js",
 				"/assets/bell-ring-CKhoAYAP.js",
@@ -68,7 +68,7 @@ var tsrStartManifest = () => ({
 				"/assets/users-CuY21h9x.js",
 				"/assets/wallet-DBDWTL-d.js",
 				"/assets/x-DsZjOeBE.js",
-				"/assets/auth-bootstrap.functions-BJoGu3v7.js"
+				"/assets/auth-bootstrap.functions-ANaEonlD.js"
 			]
 		},
 		"/auth": {
@@ -76,37 +76,37 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/auth-C7RM9t0X.js",
+				"/assets/auth-CFCqebjk.js",
 				"/assets/useServerFn-CGzw7Lur.js",
 				"/assets/loader-circle-DKGLR4MB.js",
-				"/assets/auth-bootstrap.functions-BJoGu3v7.js"
+				"/assets/auth-bootstrap.functions-ANaEonlD.js"
 			]
 		},
 		"/_authenticated/ad-sets": {
 			filePath: "D:/Projects/remix-of-remix-of-remix-of-remix-of-project-previewer/src/routes/_authenticated/ad-sets.tsx",
 			children: void 0,
 			assets: void 0,
-			preloads: ["/assets/ad-sets-CZoQrkCB.js", "/assets/useQuery-UDBNZ5Qh.js"]
+			preloads: ["/assets/ad-sets-B3kUJ4V5.js", "/assets/useQuery-cTU9adFl.js"]
 		},
 		"/_authenticated/ads": {
 			filePath: "D:/Projects/remix-of-remix-of-remix-of-remix-of-project-previewer/src/routes/_authenticated/ads.tsx",
 			children: void 0,
 			assets: void 0,
-			preloads: ["/assets/ads-DWF2JaSj.js", "/assets/useQuery-UDBNZ5Qh.js"]
+			preloads: ["/assets/ads-BfWQeK6o.js", "/assets/useQuery-cTU9adFl.js"]
 		},
 		"/_authenticated/alerts": {
 			filePath: "D:/Projects/remix-of-remix-of-remix-of-remix-of-project-previewer/src/routes/_authenticated/alerts.tsx",
 			children: void 0,
 			assets: void 0,
-			preloads: ["/assets/alerts-ChLS6YQA.js", "/assets/useQuery-UDBNZ5Qh.js"]
+			preloads: ["/assets/alerts-8AWjPN6w.js", "/assets/useQuery-cTU9adFl.js"]
 		},
 		"/_authenticated/budget-tracker": {
 			filePath: "D:/Projects/remix-of-remix-of-remix-of-remix-of-project-previewer/src/routes/_authenticated/budget-tracker.tsx",
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/budget-tracker-BMCik2rI.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/budget-tracker-BjQ5lOQj.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/trending-up-CPRoY2g_.js",
 				"/assets/triangle-alert-BIJzXi3N.js"
 			]
@@ -115,22 +115,22 @@ var tsrStartManifest = () => ({
 			filePath: "D:/Projects/remix-of-remix-of-remix-of-remix-of-project-previewer/src/routes/_authenticated/campaigns.tsx",
 			children: void 0,
 			assets: void 0,
-			preloads: ["/assets/campaigns-BcJwxQeP.js", "/assets/useQuery-UDBNZ5Qh.js"]
+			preloads: ["/assets/campaigns-BOwrgCpr.js", "/assets/useQuery-cTU9adFl.js"]
 		},
 		"/_authenticated/clients": {
 			filePath: "D:/Projects/remix-of-remix-of-remix-of-remix-of-project-previewer/src/routes/_authenticated/clients.tsx",
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/clients-CXsPcx7f.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/clients-MLDsH4Xt.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/chevron-down-C--dv1Ik.js",
 				"/assets/eye-DWVgZbuI.js",
 				"/assets/link-2-CeWFgfJT.js",
 				"/assets/pencil-gf3GoZqq.js",
 				"/assets/search-CkxEUMbq.js",
 				"/assets/trash-2-DUEtA2VT.js",
-				"/assets/admin.functions-Czwbg-cO.js"
+				"/assets/admin.functions-D4zqRMtZ.js"
 			]
 		},
 		"/_authenticated/dashboard": {
@@ -138,8 +138,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/dashboard-Cez1pAo8.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/dashboard-C4Lo1H-u.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/CandlestickChart-r4X9MvMY.js",
 				"/assets/circle-alert-DRuAdj_4.js",
 				"/assets/dollar-sign-CdsmeZDC.js",
@@ -148,7 +148,7 @@ var tsrStartManifest = () => ({
 				"/assets/refresh-cw-D7HXSwKo.js",
 				"/assets/shield-check-DhFxKXfF.js",
 				"/assets/trash-2-DUEtA2VT.js",
-				"/assets/admin.functions-Czwbg-cO.js"
+				"/assets/admin.functions-D4zqRMtZ.js"
 			]
 		},
 		"/_authenticated/facebook-marketing-api": {
@@ -156,8 +156,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/facebook-marketing-api-B9gv8azT.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/facebook-marketing-api-B5-kKZdP.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/save-BI_ENcwx.js",
 				"/assets/chevron-down-C--dv1Ik.js",
 				"/assets/circle-check-DUiM-mQi.js",
@@ -169,8 +169,8 @@ var tsrStartManifest = () => ({
 				"/assets/shield-check-DhFxKXfF.js",
 				"/assets/trash-2-DUEtA2VT.js",
 				"/assets/triangle-alert-BIJzXi3N.js",
-				"/assets/auth-middleware-FEJHVdTr.js",
-				"/assets/admin.functions-Czwbg-cO.js"
+				"/assets/auth-middleware-DxuTfWmq.js",
+				"/assets/admin.functions-D4zqRMtZ.js"
 			]
 		},
 		"/_authenticated/insights": {
@@ -178,8 +178,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/insights-Bp0X1K3r.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/insights-BzyVPSdp.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/CandlestickChart-r4X9MvMY.js",
 				"/assets/download-TyjatuAr.js"
 			]
@@ -189,8 +189,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/reports-NQbbqoNu.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/reports-IebWeIiw.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/download-TyjatuAr.js"
 			]
 		},
@@ -199,13 +199,13 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/settings-BYMMwodY.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/settings-DOvtZ8_o.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/save-BI_ENcwx.js",
 				"/assets/loader-circle-DKGLR4MB.js",
 				"/assets/lock-CIcMEDV2.js",
 				"/assets/triangle-alert-BIJzXi3N.js",
-				"/assets/admin.functions-Czwbg-cO.js"
+				"/assets/admin.functions-D4zqRMtZ.js"
 			]
 		},
 		"/_authenticated/sync-activity": {
@@ -213,8 +213,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/sync-activity-BqtoxKZc.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/sync-activity-B4IOmhvE.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/circle-alert-DRuAdj_4.js",
 				"/assets/circle-check-DUiM-mQi.js",
 				"/assets/list-checks-BCqw1M-F.js",
@@ -222,7 +222,7 @@ var tsrStartManifest = () => ({
 				"/assets/refresh-cw-D7HXSwKo.js",
 				"/assets/shield-check-DhFxKXfF.js",
 				"/assets/trash-2-DUEtA2VT.js",
-				"/assets/admin.functions-Czwbg-cO.js"
+				"/assets/admin.functions-D4zqRMtZ.js"
 			]
 		},
 		"/portal/$slug": {
@@ -230,8 +230,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/portal._slug-CYh4YqE6.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/portal._slug-DI9zsbwJ.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/useServerFn-CGzw7Lur.js",
 				"/assets/activity-D0ms_CdN.js",
 				"/assets/chart-column-CtaVAa8x.js",
@@ -256,7 +256,7 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/clients_.new-Bo5EzrfZ.js",
+				"/assets/clients_.new-CmCUUbuM.js",
 				"/assets/arrow-left-BQNlw8Pe.js",
 				"/assets/chevron-down-C--dv1Ik.js",
 				"/assets/circle-alert-DRuAdj_4.js",
@@ -265,7 +265,7 @@ var tsrStartManifest = () => ({
 				"/assets/refresh-cw-D7HXSwKo.js",
 				"/assets/search-CkxEUMbq.js",
 				"/assets/shield-check-DhFxKXfF.js",
-				"/assets/admin.functions-Czwbg-cO.js"
+				"/assets/admin.functions-D4zqRMtZ.js"
 			]
 		},
 		"/_authenticated/clients_/$slug/report": {
@@ -273,8 +273,8 @@ var tsrStartManifest = () => ({
 			children: void 0,
 			assets: void 0,
 			preloads: [
-				"/assets/clients_._slug.report-CUeFg79e.js",
-				"/assets/useQuery-UDBNZ5Qh.js",
+				"/assets/clients_._slug.report-C6uhbvjO.js",
+				"/assets/useQuery-cTU9adFl.js",
 				"/assets/arrow-left-BQNlw8Pe.js",
 				"/assets/dollar-sign-CdsmeZDC.js",
 				"/assets/external-link-tBUoPzrB.js",
@@ -285,7 +285,7 @@ var tsrStartManifest = () => ({
 			]
 		}
 	},
-	clientEntry: "/assets/index-Kt57t2bO.js"
+	clientEntry: "/assets/index-D7vWi8xs.js"
 });
 //#endregion
 export { tsrStartManifest };

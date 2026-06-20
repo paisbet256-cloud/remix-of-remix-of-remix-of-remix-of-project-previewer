@@ -3,8 +3,8 @@ import { i as require_jsx_runtime, t as useQuery } from "../_libs/react+tanstack
 import { d as Link } from "../_libs/@tanstack/react-router+[...].mjs";
 import { Ct as ArrowLeft, P as MousePointerClick, R as MapPin, W as Link2, a as Wallet, d as TrendingDown, it as ExternalLink, j as Pencil, k as Phone, o as Users, ot as DollarSign, p as Target, rt as Eye, st as Copy, tt as FileDown, z as Mail } from "../_libs/lucide-react.mjs";
 import { n as toast } from "../_libs/sonner.mjs";
-import { t as Route } from "./clients_._slug.report-CdQK7wTL.mjs";
-//#region node_modules/.nitro/vite/services/ssr/assets/clients_._slug.report-CuuYg7K0.js
+import { t as Route } from "./clients_._slug.report-7zYfZm78.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/clients_._slug.report-Dfj0V8gf.js
 var import_jsx_runtime = require_jsx_runtime();
 function fmtUSD(n) {
 	return `$${(Number(n) || 0).toLocaleString(void 0, {
@@ -19,25 +19,33 @@ function ClientReportPage() {
 	const { slug } = Route.useParams();
 	const { data, isLoading } = useQuery({
 		queryKey: ["client-report", slug],
+		enabled: Boolean(slug),
 		queryFn: async () => {
-			const { data: client } = await supabase.from("clients").select("*").eq("slug", slug).maybeSingle();
+			if (!slug) return null;
+			const { data: client, error: clientError } = await supabase.from("clients").select("*").eq("slug", slug).maybeSingle();
+			if (clientError) throw clientError;
 			if (!client) return null;
-			const { data: accounts } = await supabase.from("ad_accounts").select("*").eq("client_id", client.id);
+			const { data: accounts, error: accountsError } = await supabase.from("ad_accounts").select("*").eq("client_id", client.id);
+			if (accountsError) throw accountsError;
 			const acctIds = (accounts ?? []).map((a) => a.id);
-			const { data: assigned } = await supabase.from("client_campaigns").select("campaign_id").eq("client_id", client.id);
+			const { data: assigned, error: assignedError } = await supabase.from("client_campaigns").select("campaign_id").eq("client_id", client.id);
+			if (assignedError) throw assignedError;
 			const assignedIds = (assigned ?? []).map((r) => r.campaign_id);
 			let campaigns = [];
 			if (assignedIds.length) {
-				const { data } = await supabase.from("campaigns").select("*").in("id", assignedIds);
+				const { data, error } = await supabase.from("campaigns").select("*").in("id", assignedIds);
+				if (error) throw error;
 				campaigns = data ?? [];
 			} else if (acctIds.length) {
-				const { data } = await supabase.from("campaigns").select("*").in("ad_account_id", acctIds);
+				const { data, error } = await supabase.from("campaigns").select("*").in("ad_account_id", acctIds);
+				if (error) throw error;
 				campaigns = data ?? [];
 			}
 			const campIds = campaigns.map((c) => c.id);
 			let ads = [];
 			if (campIds.length) {
-				const { data } = await supabase.from("ads").select("id,name,fb_ad_id,effective_status,campaign_id,ad_account_id,spend,impressions,reach,clicks,results").in("campaign_id", campIds).order("spend", { ascending: false }).limit(200);
+				const { data, error } = await supabase.from("ads").select("id,name,fb_ad_id,effective_status,campaign_id,ad_account_id,spend,impressions,reach,clicks,results").in("campaign_id", campIds).order("spend", { ascending: false }).limit(200);
+				if (error) throw error;
 				ads = data ?? [];
 			}
 			const acctById = new Map((accounts ?? []).map((a) => [a.id, a]));
@@ -67,7 +75,7 @@ function ClientReportPage() {
 	});
 	const { client, accounts, campaigns, ads, acctById } = data;
 	const clientIdShort = client.client_code ?? (client.slug ?? "").slice(0, 8).toUpperCase();
-	const portalUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/client/${clientIdShort}${client.portal_token ? `?token=${client.portal_token}` : ""}`;
+	const portalUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/portal/${client.slug}${client.portal_token ? `?token=${client.portal_token}` : ""}`;
 	const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&bgcolor=0f172a&color=10b981&data=${encodeURIComponent(portalUrl)}`;
 	const totals = (campaigns.length ? campaigns : accounts).reduce((acc, r) => ({
 		spend: acc.spend + (Number(r.spend ?? r.total_spend) || 0),
@@ -86,8 +94,13 @@ function ClientReportPage() {
 	const remaining = deposit - totals.spend;
 	const costPerResult = totals.results > 0 ? totals.spend / totals.results : 0;
 	const copy = async (text, label = "Copied") => {
-		await navigator.clipboard.writeText(text);
-		toast.success(label);
+		try {
+			await navigator.clipboard.writeText(text);
+			toast.success(label);
+		} catch (error) {
+			console.error("Clipboard copy failed", error);
+			toast.error("Unable to copy");
+		}
 	};
 	return /* @__PURE__ */ (0, import_jsx_runtime.jsxs)("div", {
 		className: "space-y-6",
