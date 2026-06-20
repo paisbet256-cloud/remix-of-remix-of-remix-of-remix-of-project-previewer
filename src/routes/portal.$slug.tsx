@@ -173,8 +173,6 @@ const [pendingRange, setPendingRange] = useState<DateRange>("all");
   return { ...sum, frequency: sum.reach > 0 ? sum.impressions / sum.reach : 0 };
 }, [data, range, filteredTS]);
 
-  }, [data, range, filteredTS]);
-
   if (isLoading) return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading…</div>;
   if (!data || (data as any).notFound) return <NotFoundCard reason="not-found" />;
   if ((data as any).forbidden) return <NotFoundCard reason="forbidden" />;
