@@ -70,8 +70,9 @@ function ClientReportPage() {
 
   const { client, accounts, campaigns, ads, acctById } = data;
   const clientIdShort = client.client_code ?? (client.slug ?? "").slice(0, 8).toUpperCase();
-  const portalUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/client/${clientIdShort}${client.portal_token ? `?token=${client.portal_token}` : ""}`;
-  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&bgcolor=0f172a&color=10b981&data=${encodeURIComponent(portalUrl)}`;
+  const portalUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/portal/${client.slug}${client.portal_token ? `?token=${client.portal_token}` : ""}`;
+
+const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&bgcolor=0f172a&color=10b981&data=${encodeURIComponent(portalUrl)}`;
 
   // Aggregate from assigned campaigns (preferred) or accounts fallback
   const baseRows = campaigns.length ? campaigns : accounts;
