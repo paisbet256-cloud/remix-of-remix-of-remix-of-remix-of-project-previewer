@@ -19,10 +19,12 @@ function Landing() {
   const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
+    
     // ✅ FIX 1: Timeout যোগ করা হয়েছে — Supabase যদি connect না হয়
     // তাহলে ৩ সেকেন্ড পরে automatically page দেখাবে
     const timeout = setTimeout(() => {
-      setChecking(false);
+      if (isMounted) setChecking(false);
     }, 3000);
 
     // ✅ FIX 2: Error handling যোগ করা হয়েছে — connection fail হলেও
@@ -30,16 +32,22 @@ function Landing() {
     supabase.auth
       .getSession()
       .then(({ data }) => {
+        if (!isMounted) return;
         clearTimeout(timeout);
-        setSignedIn(!!data.session);
+        setSignedIn(!!data?.session);
         setChecking(false);
       })
-      .catch(() => {
+      .catch((error) => {
+        if (!isMounted) return;
+        console.warn("[Auth] Session check failed:", error instanceof Error ? error.message : String(error));
         clearTimeout(timeout);
         setChecking(false);
       });
 
-    return () => clearTimeout(timeout);
+    return () => {
+      isMounted = false;
+      clearTimeout(timeout);
+    };
   }, []);
 
   // ✅ FIX 3: Blank div এর বদলে proper loading spinner দেখাচ্ছে

@@ -22,9 +22,22 @@ export function LiveClock() {
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
-    setNow(new Date());
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
+    let isMounted = true;
+
+    if (isMounted) {
+      setNow(new Date());
+    }
+
+    const id = setInterval(() => {
+      if (isMounted) {
+        setNow(new Date());
+      }
+    }, 1000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(id);
+    };
   }, []);
 
   if (!now) {

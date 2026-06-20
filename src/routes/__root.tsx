@@ -95,13 +95,36 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
   const router = useRouter();
+  
   useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
-      router.invalidate();
-      if (event !== "SIGNED_OUT") queryClient.invalidateQueries();
-    });
-    return () => { sub.subscription.unsubscribe(); };
+    let isMounted = true;
+    let subscription: ReturnType<typeof supabase.auth.onAuthStateChange> | null = null;
+
+    try {
+      const result = supabase.auth.onAuthStateChange((event) => {
+        if (!isMounted) return;
+        if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
+        
+        try {
+          router.invalidate();
+          if (event !== "SIGNED_OUT") queryClient.invalidateQueries();
+        } catch (error) {
+          console.error("[Auth] State change handling failed:", error instanceof Error ? error.message : String(error));
+        }
+      });
+      subscription = result;
+    } catch (error) {
+      console.error("[Auth] Failed to set up state change listener:", error instanceof Error ? error.message : String(error));
+    }
+
+    return () => {
+      isMounted = false;
+      try {
+        subscription?.data?.subscription?.unsubscribe?.();
+      } catch (error) {
+        console.error("[Auth] Failed to unsubscribe:", error instanceof Error ? error.message : String(error));
+      }
+    };
   }, [queryClient, router]);
 
   return (

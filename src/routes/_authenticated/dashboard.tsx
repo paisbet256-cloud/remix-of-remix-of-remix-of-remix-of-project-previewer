@@ -28,8 +28,9 @@ function Dashboard() {
   const [retesting, setRetesting] = useState(false);
   const [refreshingAll, setRefreshingAll] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
+  const [autoSyncErrors, setAutoSyncErrors] = useState(0);
 
-  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: () => getSettings({ data: undefined as any }) });
+  const { data: settings } = useQuery({ queryKey: ["settings"], queryFn: () => getSettings({ data: {} }) });
 
   const { data: accounts } = useQuery({
     queryKey: ["dashboard-accounts"],
@@ -85,33 +86,90 @@ function Dashboard() {
     },
   });
 
+  const MAX_SYNC_ERRORS = 3;
+
   useEffect(() => {
     if (settings?.auto_sync_enabled !== undefined) setAutoSync(settings.auto_sync_enabled);
   }, [settings?.auto_sync_enabled]);
 
   useEffect(() => {
-    if (!autoSync || !settings?.has_token) return;
+    if (!autoSync || !settings?.has_token) {
+      setAutoSyncErrors(0);
+      return;
+    }
+    
     const minutes = Math.max(1, Number(settings.sync_interval_minutes) || 5);
-    const timer = window.setInterval(async () => {
-      if (syncing) return;
+    let timer: NodeJS.Timeout;
+    let isMounted = true;
+
+    const runSync = async () => {
+      if (syncing || !isMounted) return;
+      
       try {
-        const res = await syncFn({ data: undefined as any });
-        if (!res.skipped) qc.invalidateQueries();
-      } catch (e) {
-        console.error("[dashboard auto-sync] failed", e);
+        const res = await syncFn({ data: {} });
+        if (!res.skipped) {
+          qc.invalidateQueries();
+          setAutoSyncErrors(0); // Reset error count on success
+        } else {
+          const newErrorCount = autoSyncErrors + 1;
+          setAutoSyncErrors(newErrorCount);
+          if (newErrorCount >= MAX_SYNC_ERRORS) {
+            console.error("[dashboard auto-sync] Max retries reached - disabling", res.tokenHealth?.error);
+            toast.error("Auto-sync stopped. Check your settings.");
+            setAutoSync(false);
+          } else {
+            console.warn("[dashboard auto-sync] Skipped", res.tokenHealth?.error);
+          }
+        }
+      } catch (error) {
+        const newErrorCount = autoSyncErrors + 1;
+        setAutoSyncErrors(newErrorCount);
+        console.error("[dashboard auto-sync] failed:", error instanceof Error ? error.message : String(error));
+        
+        if (newErrorCount >= MAX_SYNC_ERRORS) {
+          console.error("[dashboard auto-sync] Max retries reached - disabling");
+          toast.error("Auto-sync failed too many times. Please check your connection.");
+          setAutoSync(false);
+        }
       }
-    }, minutes * 60_000);
-    return () => window.clearInterval(timer);
-  }, [autoSync, settings?.has_token, settings?.sync_interval_minutes, syncing, syncFn, qc]);
+    };
+
+    // Initial sync after a delay
+    timer = window.setInterval(runSync, minutes * 60_000);
+    
+    // Run first sync after 5 seconds
+    const initialTimer = window.setTimeout(() => {
+      if (isMounted) runSync();
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(timer);
+      window.clearTimeout(initialTimer);
+    };
+  }, [autoSync, settings?.has_token, settings?.sync_interval_minutes, syncing, syncFn, qc, autoSyncErrors]);
 
   // Realtime
   useEffect(() => {
+    let isActive = true;
     const ch = supabase
       .channel("dashboard-rt")
-      .on("postgres_changes", { event: "*", schema: "public", table: "ad_accounts" }, () => qc.invalidateQueries({ queryKey: ["dashboard-accounts"] }))
-      .on("postgres_changes", { event: "*", schema: "public", table: "sync_logs" }, () => qc.invalidateQueries({ queryKey: ["dashboard-logs"] }))
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
+      .on("postgres_changes", { event: "*", schema: "public", table: "ad_accounts" }, () => {
+        if (isActive) qc.invalidateQueries({ queryKey: ["dashboard-accounts"] });
+      })
+      .on("postgres_changes", { event: "*", schema: "public", table: "sync_logs" }, () => {
+        if (isActive) qc.invalidateQueries({ queryKey: ["dashboard-logs"] });
+      })
+      .subscribe((status) => {
+        if (status === "CLOSED" && isActive) {
+          console.warn("[Dashboard] Realtime channel closed unexpectedly");
+        }
+      });
+    
+    return () => {
+      isActive = false;
+      supabase.removeChannel(ch);
+    };
   }, [qc]);
 
   const totals = useMemo(() => {
@@ -134,7 +192,7 @@ function Dashboard() {
     if (!settings?.has_token) { toast.error("Add your Facebook System User token in Settings first"); return; }
     setSyncing(true);
     try {
-      const res = await syncFn({ data: undefined as any });
+      const res = await syncFn({ data: {} });
       if (res.skipped) {
         toast.error(res.tokenHealth?.error ?? "Token check failed. Fix Settings first.");
       } else if (res.count === 0) {
@@ -144,20 +202,28 @@ function Dashboard() {
         toast[failed.length ? "warning" : "success"](`Synced ${res.count} accounts${failed.length ? ` · ${failed.length} failed` : ""}`);
       }
       setLastSyncAt(Date.now());
+      setAutoSyncErrors(0); // Reset error count on manual sync success
       qc.invalidateQueries();
-    } catch (e: any) { toast.error(e?.message ?? "Sync failed"); }
+    } catch (e: any) { 
+      console.error("[Dashboard] Sync failed:", e);
+      toast.error(e?.message ?? "Sync failed"); 
+    }
     finally { setSyncing(false); }
   };
 
   const onRetest = async () => {
     setRetesting(true);
     try {
-      const r: any = await retestFn({ data: undefined as any });
+      const r = await retestFn({ data: {} });
       if (!r.ok) toast.error(r.error ?? "Retest failed");
       else toast.success(`Re-imported ${r.imported} accounts`);
       setLastSyncAt(Date.now());
+      setAutoSyncErrors(0); // Reset error count on manual operation success
       qc.invalidateQueries();
-    } catch (e: any) { toast.error(e?.message ?? "Retest failed"); }
+    } catch (e: any) { 
+      console.error("[Dashboard] Retest failed:", e);
+      toast.error(e?.message ?? "Retest failed"); 
+    }
     finally { setRetesting(false); }
   };
 
@@ -165,11 +231,15 @@ function Dashboard() {
     if (!confirm("This will wipe all cached campaigns/ad sets/ads/insights and run a full re-sync. Continue?")) return;
     setRefreshingAll(true);
     try {
-      const r: any = await refreshFn({ data: undefined as any });
+      const r = await refreshFn({ data: {} });
       toast.success(`Cleared cache · synced ${r.count ?? 0} accounts`);
       setLastSyncAt(Date.now());
+      setAutoSyncErrors(0); // Reset error count on manual operation success
       qc.invalidateQueries();
-    } catch (e: any) { toast.error(e?.message ?? "Refresh failed"); }
+    } catch (e: any) { 
+      console.error("[Dashboard] Refresh failed:", e);
+      toast.error(e?.message ?? "Refresh failed"); 
+    }
     finally { setRefreshingAll(false); }
   };
 
