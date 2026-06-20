@@ -22,35 +22,56 @@ function ClientReportPage() {
 
   const { data, isLoading } = useQuery({
     queryKey: ["client-report", slug],
+    enabled: Boolean(slug),
     queryFn: async () => {
-      const { data: client } = await supabase.from("clients").select("*").eq("slug", slug).maybeSingle();
+      if (!slug) return null;
+
+      const { data: client, error: clientError } = await supabase
+        .from("clients")
+        .select("*")
+        .eq("slug", slug)
+        .maybeSingle();
+      if (clientError) throw clientError;
       if (!client) return null;
-      const { data: accounts } = await supabase
-        .from("ad_accounts").select("*").eq("client_id", client.id);
+
+      const { data: accounts, error: accountsError } = await supabase
+        .from("ad_accounts")
+        .select("*")
+        .eq("client_id", client.id);
+      if (accountsError) throw accountsError;
       const acctIds = (accounts ?? []).map((a: any) => a.id);
-      const { data: assigned } = await supabase
-        .from("client_campaigns").select("campaign_id").eq("client_id", client.id);
+
+      const { data: assigned, error: assignedError } = await supabase
+        .from("client_campaigns")
+        .select("campaign_id")
+        .eq("client_id", client.id);
+      if (assignedError) throw assignedError;
       const assignedIds = (assigned ?? []).map((r: any) => r.campaign_id);
 
       let campaigns: any[] = [];
       if (assignedIds.length) {
-        const { data } = await supabase.from("campaigns").select("*").in("id", assignedIds);
+        const { data, error } = await supabase.from("campaigns").select("*").in("id", assignedIds);
+        if (error) throw error;
         campaigns = data ?? [];
       } else if (acctIds.length) {
-        const { data } = await supabase.from("campaigns").select("*").in("ad_account_id", acctIds);
+        const { data, error } = await supabase.from("campaigns").select("*").in("ad_account_id", acctIds);
+        if (error) throw error;
         campaigns = data ?? [];
       }
+
       const campIds = campaigns.map((c) => c.id);
       let ads: any[] = [];
       if (campIds.length) {
-        const { data } = await supabase
+        const { data, error } = await supabase
           .from("ads")
           .select("id,name,fb_ad_id,effective_status,campaign_id,ad_account_id,spend,impressions,reach,clicks,results")
           .in("campaign_id", campIds)
           .order("spend", { ascending: false })
           .limit(200);
+        if (error) throw error;
         ads = data ?? [];
       }
+
       const acctById = new Map((accounts ?? []).map((a: any) => [a.id, a]));
       return { client, accounts: accounts ?? [], campaigns, ads, acctById };
     },
@@ -91,8 +112,13 @@ function ClientReportPage() {
   const costPerResult = totals.results > 0 ? totals.spend / totals.results : 0;
 
   const copy = async (text: string, label = "Copied") => {
-    await navigator.clipboard.writeText(text);
-    toast.success(label);
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success(label);
+    } catch (error) {
+      console.error("Clipboard copy failed", error);
+      toast.error("Unable to copy");
+    }
   };
 
   return (
