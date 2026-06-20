@@ -7,7 +7,7 @@ function formatBD(d: Date, lang: "en" | "bn") {
   const locale = lang === "bn" ? "bn-BD" : "en-GB";
   const time = new Intl.DateTimeFormat(locale, {
     hour: "2-digit", minute: "2-digit", second: "2-digit",
-    hour12: false, timeZone: "Asia/Dhaka",
+    hour12: true, timeZone: "Asia/Dhaka",
   }).format(d);
   const date = new Intl.DateTimeFormat(locale, {
     weekday: "short", day: "2-digit", month: "short",
@@ -40,7 +40,10 @@ export function LiveClock() {
       <Clock className="size-3 sm:size-3.5 text-primary animate-pulse shrink-0" />
       <div className="leading-tight">
         <div className="font-mono tabular-nums font-semibold text-foreground">{time}</div>
-        <div className="hidden sm:block text-[10px] text-muted-foreground">{date} · {t("time.bd")}</div>
+        <div className="text-[9px] sm:text-[10px] text-muted-foreground">
+          {date}
+          <span className="hidden sm:inline"> · {t("time.bd")}</span>
+        </div>
       </div>
     </div>
   );

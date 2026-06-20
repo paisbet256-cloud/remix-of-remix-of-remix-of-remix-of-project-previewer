@@ -4,7 +4,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { getClientPortalData, getClientInsightsForExport } from "@/lib/fb/portal.functions";
+import { getClientPortalData, getClientInsightsForExport, triggerClientSync } from "@/lib/fb/portal.functions";
 import { supabase } from "@/integrations/supabase/client";
 import {
   RefreshCw, Download, Printer, FileImage, FileText,
@@ -46,15 +46,61 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
   const { t } = useI18n();
   const fetchPortal = useServerFn(getClientPortalData);
   const fetchExport = useServerFn(getClientInsightsForExport);
+  const runSync = useServerFn(triggerClientSync);
   const [exporting, setExporting] = useState<string | null>(null);
-  const [range, setRange] = useState<DateRange>("all");
-  const [pendingRange, setPendingRange] = useState<DateRange>("all");
+  // Default to "Last 7 days" so the portal aligns with Ads Manager's default
+  // 7-day view instead of an inflated lifetime total.
+  const [range, setRange] = useState<DateRange>("7d");
+  const [pendingRange, setPendingRange] = useState<DateRange>("7d");
+  const [syncing, setSyncing] = useState(false);
+  const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
 
   const { data, isLoading, isFetching, refetch, dataUpdatedAt } = useQuery({
     queryKey: ["portal", slug, token ?? ""],
     queryFn: () => fetchPortal({ data: { slug, token } }),
     refetchInterval: 60_000,
   });
+
+  // Trigger a fresh Meta sync on portal mount (debounced — skips accounts
+  // already synced in the last 2 minutes). Ensures the client sees real-time
+  // numbers instead of whatever the last cron run left in the DB.
+  useEffect(() => {
+    let cancelled = false;
+    const run = async (minAgeSec: number) => {
+      if (cancelled) return;
+      try {
+        setSyncing(true);
+        const r: any = await runSync({ data: { slug, token, minAgeSec } });
+        if (!cancelled && r?.ok) {
+          setLastSyncAt(Date.now());
+          if (r.synced > 0) refetch();
+        }
+      } catch (_e) {
+        // Sync failure is non-fatal — the realtime channel + 60s refetch still keep UI live.
+      } finally {
+        if (!cancelled) setSyncing(false);
+      }
+    };
+    // Immediate fetch on mount (allow up-to-2-min-old data on first paint),
+    // then a per-minute background sync that fires even if the tab is idle.
+    run(120);
+    const id = setInterval(() => run(50), 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [slug, token, runSync, refetch]);
+
+  // Hard refresh: force a Meta sync + refetch (bound to the header button).
+  const hardRefresh = async () => {
+    try {
+      setSyncing(true);
+      await runSync({ data: { slug, token, force: true } });
+      setLastSyncAt(Date.now());
+      await refetch();
+    } catch (_e) {
+      await refetch();
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   useEffect(() => {
     const ch = supabase
@@ -223,12 +269,13 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
             <LanguageToggle />
             <ThemePicker />
             <button
-              onClick={() => refetch()}
-              disabled={isFetching}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 px-2.5 py-1 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs font-semibold disabled:opacity-60 transition-all"
+              onClick={hardRefresh}
+              disabled={isFetching || syncing}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 hover:bg-white/25 border border-white/20 px-3 py-2 sm:px-3 sm:py-1.5 text-[11px] sm:text-xs font-semibold disabled:opacity-60 transition-all min-h-[36px] sm:min-h-0"
             >
-              <RefreshCw className={`size-3 sm:size-3.5 ${isFetching ? "animate-spin" : ""}`} />
-              {t("portal.refresh") ?? "Refresh"}
+              <RefreshCw className={`size-3.5 sm:size-3.5 ${(isFetching || syncing) ? "animate-spin" : ""}`} />
+              <span className="hidden sm:inline">{syncing ? "Syncing…" : (t("portal.refresh") ?? "Refresh")}</span>
+              <span className="sm:hidden">{syncing ? "Sync…" : "Sync"}</span>
             </button>
           </div>
         </div>
@@ -260,9 +307,12 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
               Apply Filter
             </button>
           </div>
-          <div className="text-xs text-muted-foreground font-medium inline-flex items-center gap-2">
-            <span className="size-1.5 rounded-full bg-emerald-500 gv-pulse-dot" />
-            {adSetsCount} Ad Set{adSetsCount !== 1 ? "s" : ""} · Live Data
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="text-xs text-muted-foreground font-medium inline-flex items-center gap-2">
+              <span className={`size-1.5 rounded-full ${syncing ? "bg-amber-500 animate-pulse" : "bg-emerald-500 gv-pulse-dot"}`} />
+              {adSetsCount} Ad Set{adSetsCount !== 1 ? "s" : ""} · {syncing ? "Syncing live…" : "Live Data"}
+            </div>
+            <SyncedAgo at={lastSyncAt ?? dataUpdatedAt} />
           </div>
         </div>
 
@@ -409,7 +459,70 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
               <BarChart3 className="size-4 text-muted-foreground" />
             </div>
           </div>
-          <div className="overflow-x-auto">
+          {/* Mobile card list — easier to scan on phones than horizontal scroll */}
+          <div className="md:hidden divide-y divide-border/60">
+            {adSetList.length === 0 ? (
+              <div className="text-center py-10 text-muted-foreground text-sm">No ad sets assigned yet. Contact your agency.</div>
+            ) : adSetList.map((s: any) => {
+              const aSpend = Number(s.spend) || 0;
+              const aResults = Number(s.results) || 0;
+              const aImpr = Number(s.impressions) || 0;
+              const dailyBudget = s.daily_budget ? Number(s.daily_budget) : 0;
+              const resultRateAd = aImpr > 0 ? (aResults / aImpr) * 100 : 0;
+              const spendPct = totalAdSetSpend > 0 ? (aSpend / totalAdSetSpend) * 100 : 0;
+              const costPerR = aResults > 0 ? mk(aSpend) / aResults : 0;
+              return (
+                <div key={s.id} className="p-4 space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="font-semibold text-sm leading-tight truncate">{s.name}</div>
+                      <div className="text-[10px] text-muted-foreground tabular-nums mt-1">{(s.id ?? "").toString().slice(0, 16)}</div>
+                    </div>
+                    <span className={`shrink-0 inline-flex items-center gap-1.5 text-[10px] font-bold uppercase rounded-full px-2.5 py-1 ${
+                      s.effective_status === "ACTIVE" ? "bg-emerald-500/15 text-emerald-500" :
+                      s.effective_status === "PAUSED" ? "bg-amber-500/15 text-amber-500" :
+                      "bg-muted/40 text-muted-foreground"
+                    }`}>{s.effective_status ?? "—"}</span>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg bg-surface/60 px-2.5 py-2">
+                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Spend</div>
+                      <div className="text-sm font-bold tabular-nums mt-0.5 truncate">{dcur(aSpend)}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface/60 px-2.5 py-2">
+                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Results</div>
+                      <div className="text-sm font-bold tabular-nums mt-0.5 truncate">{num(aResults)}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface/60 px-2.5 py-2">
+                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Cost/Res</div>
+                      <div className="text-sm font-bold tabular-nums mt-0.5 truncate">{aResults > 0 ? cur(costPerR) : "—"}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface/60 px-2.5 py-2">
+                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Impr.</div>
+                      <div className="text-sm font-bold tabular-nums mt-0.5 truncate">{num(aImpr)}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface/60 px-2.5 py-2">
+                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">Reach</div>
+                      <div className="text-sm font-bold tabular-nums mt-0.5 truncate">{num(Number(s.reach) || 0)}</div>
+                    </div>
+                    <div className="rounded-lg bg-surface/60 px-2.5 py-2">
+                      <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold">CTR</div>
+                      <div className="text-sm font-bold tabular-nums mt-0.5 truncate">{Number(s.ctr || 0).toFixed(2)}%</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                    <span>Daily: <span className="font-semibold text-foreground">{dailyBudget > 0 ? dcur(dailyBudget) : "—"}</span></span>
+                    <span>Result Rate: <span className="font-semibold text-foreground">{aImpr > 0 ? `${resultRateAd.toFixed(2)}%` : "—"}</span></span>
+                  </div>
+                  <div className="h-1.5 rounded-full bg-surface overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 transition-all duration-700" style={{ width: `${Math.min(100, spendPct)}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-[10px] uppercase tracking-wider text-muted-foreground bg-surface/60">
                 <tr>
@@ -710,6 +823,27 @@ function NotFoundCard({ reason }: { reason: "not-found" | "forbidden" }) {
             : "Please check the link or contact your agency."}
         </p>
       </div>
+    </div>
+  );
+}
+
+function SyncedAgo({ at }: { at: number | null | undefined }) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!at) return null;
+  const diff = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  const label =
+    diff < 10 ? "just now" :
+    diff < 60 ? `${diff}s ago` :
+    diff < 3600 ? `${Math.floor(diff / 60)}m ago` :
+    `${Math.floor(diff / 3600)}h ago`;
+  return (
+    <div className="text-[11px] text-muted-foreground inline-flex items-center gap-1.5">
+      <ClockIcon className="size-3" />
+      Synced {label}
     </div>
   );
 }

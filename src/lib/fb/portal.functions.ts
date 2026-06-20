@@ -223,3 +223,55 @@ export const getClientInsightsForExport = createServerFn({ method: "POST" })
     });
     return { forbidden: false as const, rows: enriched };
   });
+
+// Trigger a fresh Meta sync for all ad accounts attached to a client/portal slug.
+// Debounced: skips accounts whose last_sync_at < `minAgeSec` ago, so calling this
+// every page load is safe. Returns immediately even if sync is still running in
+// the background for large accounts — the realtime channel will pick up updates.
+export const triggerClientSync = createServerFn({ method: "POST" })
+  .inputValidator((d: { slug: string; token?: string; minAgeSec?: number; force?: boolean }) =>
+    z.object({
+      slug: z.string().min(1).max(120),
+      token: z.string().min(4).max(128).optional(),
+      minAgeSec: z.number().int().min(0).max(3600).optional(),
+      force: z.boolean().optional(),
+    }).parse(d))
+  .handler(async ({ data }) => {
+    const r = await loadClientWithAuth(data.slug, data.token);
+    if ("notFound" in r) return { ok: false as const, reason: "not-found" as const };
+    if ("forbidden" in r) return { ok: false as const, reason: "forbidden" as const };
+    const { client, supabaseAdmin } = r;
+
+    // Resolve the relevant ad accounts (same scoping rule as getClientPortalData).
+    const { data: assigned } = await supabaseAdmin
+      .from("client_campaigns").select("campaign_id").eq("client_id", client.id);
+    const assignedIds = (assigned ?? []).map((a) => a.campaign_id);
+
+    let accountIds: string[] = [];
+    if (assignedIds.length) {
+      const { data: cs } = await supabaseAdmin
+        .from("campaigns").select("ad_account_id").in("id", assignedIds);
+      accountIds = Array.from(new Set((cs ?? []).map((c) => c.ad_account_id).filter(Boolean)));
+    } else {
+      const { data: as } = await supabaseAdmin
+        .from("ad_accounts").select("id").eq("client_id", client.id).eq("is_active", true);
+      accountIds = (as ?? []).map((a) => a.id);
+    }
+    if (!accountIds.length) return { ok: true as const, synced: 0, skipped: 0 };
+
+    const minAgeSec = data.minAgeSec ?? 50;
+    const cutoff = new Date(Date.now() - minAgeSec * 1000).toISOString();
+    const { data: accounts } = await supabaseAdmin
+      .from("ad_accounts").select("id,last_sync_at").in("id", accountIds);
+
+    const toSync = (accounts ?? []).filter((a) =>
+      data.force || !a.last_sync_at || a.last_sync_at < cutoff,
+    );
+    if (!toSync.length) return { ok: true as const, synced: 0, skipped: accountIds.length };
+
+    // Fire-and-await — keep latency acceptable but ensure DB is fresh before returning.
+    const { syncAdAccount } = await import("./sync.server");
+    const results = await Promise.allSettled(toSync.map((a) => syncAdAccount(a.id)));
+    const okCount = results.filter((r) => r.status === "fulfilled").length;
+    return { ok: true as const, synced: okCount, skipped: accountIds.length - toSync.length };
+  });
