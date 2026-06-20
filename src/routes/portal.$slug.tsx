@@ -50,8 +50,9 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
   const [exporting, setExporting] = useState<string | null>(null);
   // Default to "Last 7 days" so the portal aligns with Ads Manager's default
   // 7-day view instead of an inflated lifetime total.
-  const [range, setRange] = useState<DateRange>("7d");
-  const [pendingRange, setPendingRange] = useState<DateRange>("7d");
+  const [range, setRange] = useState<DateRange>("all");
+const [pendingRange, setPendingRange] = useState<DateRange>("all");
+
   const [syncing, setSyncing] = useState(false);
   const [lastSyncAt, setLastSyncAt] = useState<number | null>(null);
 
@@ -127,40 +128,51 @@ export function PortalDashboard({ slug, token }: { slug: string; token?: string 
   }, [data, range, rangeDays]);
 
   const totals = useMemo(() => {
-    const empty = { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0, active: 0, frequency: 0 };
-    if (!data || (data as any).notFound || (data as any).forbidden) return empty;
-    const d: any = data;
-    // If a non-"all" range is selected, derive from filteredTS so the filter has effect.
-    if (range !== "all") {
-      const sum = filteredTS.reduce((a, r) => ({
-        spend: a.spend + (Number(r.spend) || 0),
-        reach: a.reach + (Number(r.reach) || 0),
-        impressions: a.impressions + (Number(r.impressions) || 0),
-        clicks: a.clicks + (Number(r.clicks) || 0),
-        results: a.results + (Number(r.results) || 0),
-      }), { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0 });
-      return { ...sum, active: (d.campaigns ?? []).filter((c: any) => c.effective_status === "ACTIVE").length, frequency: sum.reach > 0 ? sum.impressions / sum.reach : 0 };
-    }
-    if ((d.assignedCampaignIds ?? []).length) {
-      const sum = (d.campaigns ?? []).reduce((acc: any, c: any) => ({
-        spend: acc.spend + (Number(c.spend) || 0),
-        reach: acc.reach + (Number(c.reach) || 0),
-        impressions: acc.impressions + (Number(c.impressions) || 0),
-        clicks: acc.clicks + (Number(c.clicks) || 0),
-        results: acc.results + (Number(c.results) || 0),
-        active: acc.active + (c.effective_status === "ACTIVE" ? 1 : 0),
-      }), { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0, active: 0 });
-      return { ...sum, frequency: sum.reach > 0 ? sum.impressions / sum.reach : 0 };
-    }
-    const sum = (d.accounts ?? []).reduce((acc: any, a: any) => ({
-      spend: acc.spend + (Number(a.total_spend) || 0),
-      reach: acc.reach + (Number(a.total_reach) || 0),
-      impressions: acc.impressions + (Number(a.total_impressions) || 0),
-      clicks: acc.clicks + (Number(a.total_clicks) || 0),
-      results: acc.results + (Number(a.total_results) || 0),
-      active: acc.active + (Number(a.active_campaigns) || 0),
+  const empty = { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0, active: 0, frequency: 0 };
+  if (!data || (data as any).notFound || (data as any).forbidden) return empty;
+  const d: any = data;
+
+  // Range filter — daily snapshot sum. Reach unique → max, not sum.
+  if (range !== "all") {
+    const sum = filteredTS.reduce((a, r) => ({
+      spend:       a.spend       + (Number(r.spend) || 0),
+      impressions: a.impressions + (Number(r.impressions) || 0),
+      clicks:      a.clicks      + (Number(r.clicks) || 0),
+      results:     a.results     + (Number(r.results) || 0),
+      reach:       Math.max(a.reach, Number(r.reach) || 0),
+    }), { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0 });
+    return {
+      ...sum,
+      active: (d.campaigns ?? []).filter((c: any) => c.effective_status === "ACTIVE").length,
+      frequency: sum.reach > 0 ? sum.impressions / sum.reach : 0,
+    };
+  }
+
+  // "All Time" with assigned campaigns → lifetime per-campaign sum (matches Ads Manager exactly)
+  if ((d.assignedCampaignIds ?? []).length) {
+    const sum = (d.campaigns ?? []).reduce((acc: any, c: any) => ({
+      spend:       acc.spend       + (Number(c.spend) || 0),
+      reach:       Math.max(acc.reach, Number(c.reach) || 0), // unique
+      impressions: acc.impressions + (Number(c.impressions) || 0),
+      clicks:      acc.clicks      + (Number(c.clicks) || 0),
+      results:     acc.results     + (Number(c.results) || 0),
+      active:      acc.active      + (c.effective_status === "ACTIVE" ? 1 : 0),
     }), { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0, active: 0 });
     return { ...sum, frequency: sum.reach > 0 ? sum.impressions / sum.reach : 0 };
+  }
+
+  // "All Time" no assignments → account lifetime totals
+  const sum = (d.accounts ?? []).reduce((acc: any, a: any) => ({
+    spend:       acc.spend       + (Number(a.total_spend) || 0),
+    reach:       Math.max(acc.reach, Number(a.total_reach) || 0),
+    impressions: acc.impressions + (Number(a.total_impressions) || 0),
+    clicks:      acc.clicks      + (Number(a.total_clicks) || 0),
+    results:     acc.results     + (Number(a.total_results) || 0),
+    active:      acc.active      + (Number(a.active_campaigns) || 0),
+  }), { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0, active: 0 });
+  return { ...sum, frequency: sum.reach > 0 ? sum.impressions / sum.reach : 0 };
+}, [data, range, filteredTS]);
+
   }, [data, range, filteredTS]);
 
   if (isLoading) return <div className="min-h-screen grid place-items-center text-muted-foreground">Loading…</div>;
