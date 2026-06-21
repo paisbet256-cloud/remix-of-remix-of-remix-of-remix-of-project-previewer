@@ -283,6 +283,79 @@ export async function syncAdAccount(adAccountId: string) {
       }
     }
 
+    // ============ AD SET daily time series (NEW) ============
+    // Ground-truth per-day adset metrics. The "maximum" preset call earlier in
+    // this sync sometimes returns NO row for brand-new ad sets, leaving the
+    // ad_sets table at zero. We store daily snapshots here so the portal can
+    // aggregate adset metrics from the same source as the top dashboard
+    // (no chance of mismatch between top KPIs and the Ad Set table).
+    await supabaseAdmin
+      .from("insights_snapshots")
+      .delete()
+      .eq("ad_account_id", account.id)
+      .eq("level", "adset")
+      .gte("date_start", snapshotSinceStr);
+
+    const adsetTs = await fb.getAdSetTimeSeries(actId, token, "last_30d");
+    if (adsetTs.length > 0) {
+      const adsetTsRows = (adsetTs as any[]).map((r) => ({
+        ad_account_id: account.id,
+        level: "adset" as const,
+        entity_id: r.adset_id,
+        date_start: r.date_start,
+        date_stop: r.date_stop,
+        spend: Number(r.spend) || 0,
+        reach: Number(r.reach) || 0,
+        impressions: Number(r.impressions) || 0,
+        clicks: Number(r.clicks) || 0,
+        ctr: Number(r.ctr) || 0,
+        cpc: Number(r.cpc) || 0,
+        cpm: Number(r.cpm) || 0,
+        frequency: Number(r.frequency) || 0,
+        results: extractPrimaryResults(r.actions, r.optimization_goal ?? adSetGoalByFbId.get(r.adset_id)),
+      }));
+      for (let i = 0; i < adsetTsRows.length; i += 500) {
+        const chunk = adsetTsRows.slice(i, i + 500);
+        await supabaseAdmin.from("insights_snapshots").upsert(chunk, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
+      }
+
+      // Roll the daily rows up into the ad_sets table so any consumer reading
+      // ad_sets.* directly (older queries, exports) also sees real numbers.
+      // This OVERWRITES the earlier "maximum"-preset update because the
+      // last_30d rollup is more reliable for new ad sets than Meta's
+      // "maximum" preset (which can return nothing on day 1).
+      const agg = new Map<string, { spend: number; reach: number; impressions: number; clicks: number; results: number; goal?: string | null }>();
+      for (const r of adsetTs as any[]) {
+        const id = r.adset_id;
+        if (!id) continue;
+        const cur = agg.get(id) ?? { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0, goal: r.optimization_goal ?? adSetGoalByFbId.get(id) ?? null };
+        cur.spend       += Number(r.spend) || 0;
+        cur.impressions += Number(r.impressions) || 0;
+        cur.clicks      += Number(r.clicks) || 0;
+        cur.results     += extractPrimaryResults(r.actions, cur.goal);
+        // reach is unique users — take max across days (sum would double count).
+        cur.reach = Math.max(cur.reach, Number(r.reach) || 0);
+        agg.set(id, cur);
+      }
+      for (const [fbAdsetId, v] of agg) {
+        const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+        const cpc = v.clicks > 0 ? v.spend / v.clicks : 0;
+        const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+        const frequency = v.reach > 0 ? v.impressions / v.reach : 0;
+        await supabaseAdmin.from("ad_sets").update({
+          spend: v.spend,
+          reach: v.reach,
+          impressions: v.impressions,
+          clicks: v.clicks,
+          ctr,
+          cpc,
+          cpm,
+          frequency,
+          results: v.results,
+        }).eq("fb_adset_id", fbAdsetId).eq("ad_account_id", account.id);
+      }
+    }
+
     const activeCampaigns = campaigns.filter((c: any) => c.effective_status === "ACTIVE").length;
     await supabaseAdmin.from("ad_accounts").update({
       account_name: info.name,

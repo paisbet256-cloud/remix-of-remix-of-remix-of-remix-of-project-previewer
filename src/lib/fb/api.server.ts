@@ -207,7 +207,7 @@ export const fb = {
     else params.date_preset = datePreset;
     return fbFetchAll(`/${actId}/insights`, params, token);
   },
-  // NEW — Per-campaign time series for an ad account, optionally filtered to a
+  // Per-campaign time series for an ad account, optionally filtered to a
   // specific set of campaign IDs. This is what the portal uses when the client
   // has assigned campaigns, so totals only include their campaigns instead of
   // the entire ad account's history.
@@ -224,6 +224,21 @@ export const fb = {
         { field: "campaign.id", operator: "IN", value: fbCampaignIds },
       ]);
     }
+    if (datePreset === "last_30d") params.time_range = recentRangeThroughToday(30);
+    else params.date_preset = datePreset;
+    return fbFetchAll(`/${actId}/insights`, params, token);
+  },
+  // NEW — Per-adset daily time series. We use this so the portal always has
+  // ground-truth metrics for every ad set even when Meta's "maximum" preset
+  // returns no row for a brand-new ad set on day 1.
+  async getAdSetTimeSeries(actId: string, token: string, datePreset = "last_30d") {
+    const params: Record<string, string> = {
+      level: "adset",
+      time_increment: "1",
+      fields: "campaign_id,adset_id,adset_name,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,actions,optimization_goal,date_start,date_stop",
+      limit: "500",
+      ...INSIGHTS_ATTRIBUTION_PARAMS,
+    };
     if (datePreset === "last_30d") params.time_range = recentRangeThroughToday(30);
     else params.date_preset = datePreset;
     return fbFetchAll(`/${actId}/insights`, params, token);

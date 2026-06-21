@@ -85,7 +85,7 @@ export const getClientPortalData = createServerFn({ method: "POST" })
 
       const { data: assignedAdSets } = await supabaseAdmin
         .from("ad_sets")
-        .select("id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
+        .select("id,fb_adset_id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
         .in("campaign_id", assignedCampaignIds)
         .order("spend", { ascending: false })
         .limit(200);
@@ -122,7 +122,7 @@ export const getClientPortalData = createServerFn({ method: "POST" })
             .select("id,fb_campaign_id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
             .in("ad_account_id", accountIds).order("spend", { ascending: false }).limit(50),
           supabaseAdmin.from("ad_sets")
-            .select("id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
+            .select("id,fb_adset_id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
             .in("ad_account_id", accountIds).order("spend", { ascending: false }).limit(200),
           supabaseAdmin.from("ads")
             .select("id,ad_account_id,campaign_id,ad_set_id,name,fb_ad_id,effective_status,creative_thumbnail,preview_link,spend,reach,impressions,clicks,ctr,results")
@@ -196,6 +196,60 @@ export const getClientPortalData = createServerFn({ method: "POST" })
           .gte("date_start", sinceStr)
           .order("date_start", { ascending: true });
         dbTimeSeries = ts ?? [];
+      }
+    }
+
+    // ============ AD SET aggregated metrics (NEW) ============
+    // We aggregate per-adset daily snapshots from insights_snapshots so the
+    // Ad Set Performance table uses the SAME source as the top KPIs. This
+    // guarantees no row renders as zero just because Meta's "maximum" preset
+    // skipped a brand-new ad set on day 1.
+    if (accountIds.length && adSets.length > 0) {
+      const sinceStr = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
+      const allFbIds = adSets.map((s: any) => s.fb_adset_id).filter(Boolean);
+      if (allFbIds.length > 0) {
+        const { data: snaps } = await supabaseAdmin
+          .from("insights_snapshots")
+          .select("entity_id,spend,reach,impressions,clicks,results")
+          .in("ad_account_id", accountIds)
+          .eq("level", "adset")
+          .in("entity_id", allFbIds)
+          .gte("date_start", sinceStr);
+
+        const agg = new Map<string, { spend: number; reach: number; impressions: number; clicks: number; results: number }>();
+        for (const r of snaps ?? []) {
+          const id = (r as any).entity_id;
+          const cur = agg.get(id) ?? { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0 };
+          cur.spend       += Number((r as any).spend) || 0;
+          cur.impressions += Number((r as any).impressions) || 0;
+          cur.clicks      += Number((r as any).clicks) || 0;
+          cur.results     += Number((r as any).results) || 0;
+          cur.reach = Math.max(cur.reach, Number((r as any).reach) || 0);
+          agg.set(id, cur);
+        }
+
+        // Merge aggregated numbers into each ad set row. We OVERWRITE the
+        // ad_sets columns when the aggregate is non-zero — that matches Ads
+        // Manager because snapshots come from Meta's own daily insights
+        // endpoint. If aggregate is zero (no snapshots yet) we keep whatever
+        // is in ad_sets so we never DOWNGRADE real numbers.
+        for (const s of adSets as any[]) {
+          const v = agg.get(s.fb_adset_id);
+          if (!v) continue;
+          const hasData = v.spend > 0 || v.impressions > 0 || v.clicks > 0 || v.results > 0 || v.reach > 0;
+          if (!hasData) continue;
+          s.spend       = v.spend;
+          s.impressions = v.impressions;
+          s.clicks      = v.clicks;
+          s.reach       = v.reach;
+          s.results     = v.results;
+          s.ctr         = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+          s.cpc         = v.clicks > 0 ? v.spend / v.clicks : 0;
+          s.cpm         = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+          s.frequency   = v.reach > 0 ? v.impressions / v.reach : 0;
+        }
+        // Re-sort by spend so highest-spend ad sets appear first.
+        adSets.sort((a: any, b: any) => (Number(b.spend) || 0) - (Number(a.spend) || 0));
       }
     }
 
