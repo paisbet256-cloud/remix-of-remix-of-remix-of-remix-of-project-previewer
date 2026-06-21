@@ -49,11 +49,35 @@ function SyncActivityPage() {
     setSyncing(true);
     try {
       const r: any = await syncFn({ data: undefined as any });
-      if (r.skipped) toast.error(r.tokenHealth?.error ?? "Token check failed.");
-      else toast.success(`Synced ${r.count} accounts`);
+
+      if (r?.skipped) {
+        toast.error(r.tokenHealth?.error ?? "Token check failed.", { duration: 10000 });
+        return;
+      }
+
+      const results: Array<{ id: string; ok: boolean; error?: string | null }> = r?.results ?? [];
+      const failed = results.filter((x) => !x.ok);
+      const okCount = results.filter((x) => x.ok).length;
+
+      if (failed.length === 0) {
+        toast.success(`Synced ${okCount} account(s) successfully ✓`);
+      } else {
+        const firstErr = failed[0]?.error ?? "unknown error";
+        toast.error(
+          `Synced ${okCount} · ${failed.length} failed — ${firstErr}`,
+          { duration: 12000 },
+        );
+        // Log all failures to browser console for full debugging
+        console.error("[Sync failures]", failed);
+      }
+
       qc.invalidateQueries();
-    } catch (e: any) { toast.error(e?.message ?? "Sync failed"); }
-    finally { setSyncing(false); }
+    } catch (e: any) {
+      console.error("[Sync] exception", e);
+      toast.error(e?.message ?? "Sync failed", { duration: 10000 });
+    } finally {
+      setSyncing(false);
+    }
   };
 
   const onRefresh = async () => {
@@ -61,21 +85,35 @@ function SyncActivityPage() {
     setRefreshing(true);
     try {
       const r: any = await refreshFn({ data: undefined as any });
-      toast.success(`Cleared cache · synced ${r.count ?? 0} accounts`);
+      const failed = (r?.results ?? []).filter((x: any) => !x.ok);
+      if (failed.length) {
+        toast.error(`Refreshed · ${failed.length} failed — ${failed[0]?.error ?? "unknown"}`, { duration: 12000 });
+        console.error("[Refresh failures]", failed);
+      } else {
+        toast.success(`Cleared cache · synced ${r?.count ?? 0} accounts`);
+      }
       qc.invalidateQueries();
-    } catch (e: any) { toast.error(e?.message ?? "Refresh failed"); }
-    finally { setRefreshing(false); }
+    } catch (e: any) {
+      console.error("[Refresh] exception", e);
+      toast.error(e?.message ?? "Refresh failed", { duration: 10000 });
+    } finally { setRefreshing(false); }
   };
 
   const onRetest = async () => {
     setRetesting(true);
     try {
       const r: any = await retestFn({ data: undefined as any });
-      if (!r.ok) toast.error(r.error ?? "Retest failed");
-      else toast.success(`Re-imported ${r.imported} accounts`);
+      if (!r?.ok) {
+        toast.error(r?.error ?? "Retest failed", { duration: 12000 });
+        console.error("[Retest] failed", r);
+      } else {
+        toast.success(`Re-imported ${r.imported} accounts`);
+      }
       qc.invalidateQueries();
-    } catch (e: any) { toast.error(e?.message ?? "Retest failed"); }
-    finally { setRetesting(false); }
+    } catch (e: any) {
+      console.error("[Retest] exception", e);
+      toast.error(e?.message ?? "Retest failed", { duration: 10000 });
+    } finally { setRetesting(false); }
   };
 
   const onVerify = async () => {
@@ -86,8 +124,10 @@ function SyncActivityPage() {
       setReport(r);
       const total = (r.report ?? []).reduce((s: number, x: any) => s + x.missing_in_db.length + x.stale_in_db.length + x.diffs.length, 0);
       toast[total ? "warning" : "success"](total ? `${total} mismatch(es) detected` : "All campaigns match Ads Manager ✓");
-    } catch (e: any) { toast.error(e?.message ?? "Verify failed"); }
-    finally { setVerifying(false); }
+    } catch (e: any) {
+      console.error("[Verify] exception", e);
+      toast.error(e?.message ?? "Verify failed", { duration: 10000 });
+    } finally { setVerifying(false); }
   };
 
   return (

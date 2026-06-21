@@ -10,8 +10,7 @@ import {
   Archive, Save, Loader2, FlaskConical, DownloadCloud, ShieldCheck, ChevronDown, ChevronUp, Building2,
 } from "lucide-react";
 
-// Legacy single-Business-Manager configuration. Kept available for users who
-// previously set things up here. New users should prefer the multi-BM section above.
+// Legacy single-Business-Manager configuration.
 export function LegacySettingsSection() {
   const qc = useQueryClient();
   const getFn = useServerFn(getSettingsPublic);
@@ -35,11 +34,31 @@ export function LegacySettingsSection() {
     if (s) { setAppId(s.fb_app_id ?? ""); setBusinessId(s.fb_business_id ?? ""); }
   }, [s]);
 
-  const run = async (key: string, fn: () => Promise<any>, success: (r: any) => string) => {
+  // Properly distinguishes success vs failure — no more generic "Ad account not found" toast.
+  const run = async (
+    key: string,
+    fn: () => Promise<any>,
+    successMsg: (r: any) => string,
+  ) => {
     setBusy(key);
-    try { const r = await fn(); toast.success(success(r)); qc.invalidateQueries({ queryKey: ["settings"] }); return r; }
-    catch (e: any) { toast.error(e?.message ?? "Failed"); }
-    finally { setBusy(null); }
+    try {
+      const r = await fn();
+      // Server functions often return { ok: false, error: "..." } instead of throwing
+      if (r && typeof r === "object" && "ok" in r && r.ok === false) {
+        const errMsg = (r as any).error ?? `${key} failed`;
+        console.error(`[LegacySettings:${key}] returned not-ok`, r);
+        toast.error(errMsg, { duration: 10000 });
+        return r;
+      }
+      toast.success(successMsg(r));
+      qc.invalidateQueries({ queryKey: ["settings"] });
+      return r;
+    } catch (e: any) {
+      console.error(`[LegacySettings:${key}] exception`, e);
+      toast.error(e?.message ?? `${key} failed`, { duration: 10000 });
+    } finally {
+      setBusy(null);
+    }
   };
 
   const onSave = () => run("save", () => saveFn({ data: {
@@ -48,7 +67,8 @@ export function LegacySettingsSection() {
   }}), () => "Legacy settings saved");
 
   const onDetect = async () => {
-    const r = await run("detect", () => detectFn({ data: undefined as any }), (r) => r?.ok ? `Found ${r.businesses?.length ?? 0} BM(s)` : (r?.error ?? "Failed"));
+    const r = await run("detect", () => detectFn({ data: undefined as any }),
+      (r) => `Found ${r?.businesses?.length ?? 0} BM(s)`);
     if (r?.businesses) setBusinesses(r.businesses);
   };
 
@@ -112,13 +132,19 @@ export function LegacySettingsSection() {
             <button onClick={onSave} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-primary to-primary-glow text-primary-foreground px-4 py-2 text-sm font-semibold hover:opacity-90 disabled:opacity-50">
               {busy === "save" ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />} Save
             </button>
-            <button onClick={() => run("test", () => testFn({ data: undefined as any }), (r) => r?.ok ? `Connected · ${r.accounts?.length ?? 0} ad accounts` : (r?.error ?? "Failed"))} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated disabled:opacity-50">
+            <button onClick={() => run("test", () => testFn({ data: undefined as any }),
+                (r) => `Connected · ${r?.accounts?.length ?? 0} ad accounts`)}
+              disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated disabled:opacity-50">
               {busy === "test" ? <Loader2 className="size-4 animate-spin" /> : <FlaskConical className="size-4" />} Test
             </button>
-            <button onClick={() => run("health", () => healthFn({ data: undefined as any }), (r) => `Status: ${r?.status}`)} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated disabled:opacity-50">
+            <button onClick={() => run("health", () => healthFn({ data: undefined as any }),
+                (r) => `Status: ${r?.status}`)}
+              disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated disabled:opacity-50">
               {busy === "health" ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />} Check health
             </button>
-            <button onClick={() => run("import", () => importFn({ data: undefined as any }), (r) => `Imported ${r?.imported ?? 0} accounts`)} disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated disabled:opacity-50">
+            <button onClick={() => run("import", () => importFn({ data: undefined as any }),
+                (r) => `Imported ${r?.imported ?? 0} accounts`)}
+              disabled={!!busy} className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-2 text-sm hover:bg-surface-elevated disabled:opacity-50">
               {busy === "import" ? <Loader2 className="size-4 animate-spin" /> : <DownloadCloud className="size-4" />} Import & sync
             </button>
           </div>

@@ -11,7 +11,7 @@ async function getLegacyToken(): Promise<string | null> {
 async function getTokenForAccount(accountId: string): Promise<string> {
   const { data: acc } = await supabaseAdmin
     .from("ad_accounts")
-    .select("connection_id")
+    .select("connection_id,fb_account_id,account_name")
     .eq("id", accountId)
     .maybeSingle();
   if (acc?.connection_id) {
@@ -24,7 +24,10 @@ async function getTokenForAccount(accountId: string): Promise<string> {
   }
   const legacy = await getLegacyToken();
   if (legacy) return legacy;
-  throw new Error("No Facebook System User token configured for this ad account");
+  throw new Error(
+    `No Facebook System User token configured for account "${acc?.account_name ?? acc?.fb_account_id ?? accountId}". ` +
+    `Go to Settings → Business Managers (or Legacy section) and paste a never-expiring System User token with ads_read + ads_management + business_management scopes.`,
+  );
 }
 
 async function importVisibleAccountsForSync(token: string) {
@@ -58,10 +61,15 @@ export async function syncAdAccount(adAccountId: string) {
   const started = Date.now();
   const { data: account } = await supabaseAdmin
     .from("ad_accounts")
-    .select("id,fb_account_id,client_id")
+    .select("id,fb_account_id,client_id,account_name")
     .eq("id", adAccountId)
     .maybeSingle();
-  if (!account) throw new Error("Ad account not found");
+  if (!account) {
+    throw new Error(
+      `Ad account row missing in DB for id="${adAccountId}". ` +
+      `Click "Re-test & Re-import" to re-pull from Facebook, or the row was deleted from Business Manager.`,
+    );
+  }
 
   let itemsSynced = 0;
   let error: string | null = null;
@@ -197,7 +205,6 @@ export async function syncAdAccount(adAccountId: string) {
     }
     if (adInsights.length > 0) {
       for (const row of adInsights as any[]) {
-        // Ads inherit goal from their ad set.
         const goal = row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id);
         await supabaseAdmin.from("ads").update({
           spend: Number(row.spend) || 0,
@@ -217,7 +224,6 @@ export async function syncAdAccount(adAccountId: string) {
     snapshotSince.setUTCDate(snapshotSince.getUTCDate() - 29);
     const snapshotSinceStr = snapshotSince.toISOString().slice(0, 10);
 
-    // Replace the rolling daily window — account level.
     await supabaseAdmin
       .from("insights_snapshots")
       .delete()
@@ -246,8 +252,6 @@ export async function syncAdAccount(adAccountId: string) {
       await supabaseAdmin.from("insights_snapshots").upsert(tsRows, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
     }
 
-    // Also store PER-CAMPAIGN daily snapshots so the portal can scope totals
-    // to only the campaigns assigned to a given client (not the whole account).
     await supabaseAdmin
       .from("insights_snapshots")
       .delete()
@@ -273,7 +277,6 @@ export async function syncAdAccount(adAccountId: string) {
         frequency: Number(r.frequency) || 0,
         results: extractPrimaryResults(r.actions, r.optimization_goal),
       }));
-      // Insert in chunks of 500 to stay safe on payload size.
       for (let i = 0; i < campTsRows.length; i += 500) {
         const chunk = campTsRows.slice(i, i + 500);
         await supabaseAdmin.from("insights_snapshots").upsert(chunk, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
@@ -301,6 +304,14 @@ export async function syncAdAccount(adAccountId: string) {
     error = e instanceof FbApiError
       ? `[FB ${e.code ?? ""}] ${e.message}${e.fbtrace_id ? ` (trace ${e.fbtrace_id})` : ""}`
       : (e as Error).message;
+
+    // Surface to server logs so we can see the full stack in `wrangler tail` / Cloudflare dashboard
+    console.error(
+      `[syncAdAccount] FAILED account=${account.account_name ?? account.fb_account_id} (${account.id})`,
+      "\n  error:", error,
+      "\n  raw:", e,
+    );
+
     await supabaseAdmin.from("ad_accounts").update({
       last_sync_at: new Date().toISOString(),
       last_sync_status: "failed",
@@ -342,14 +353,16 @@ export async function syncAllAccounts() {
     .eq("is_active", true);
   const autoImport = existingCount === 0 && legacyToken ? await importVisibleAccountsForSync(legacyToken) : { imported: 0 };
 
-  const { data: accounts } = await supabaseAdmin.from("ad_accounts").select("id,client_id").eq("is_active", true);
-  const results: Array<{ id: string; ok: boolean; error?: string | null }> = [];
+  const { data: accounts } = await supabaseAdmin.from("ad_accounts").select("id,client_id,account_name,fb_account_id").eq("is_active", true);
+  const results: Array<{ id: string; ok: boolean; error?: string | null; account_name?: string | null }> = [];
   for (const a of accounts ?? []) {
     try {
       const r = await syncAdAccount(a.id);
-      results.push({ id: a.id, ok: r.ok, error: r.error });
+      results.push({ id: a.id, ok: r.ok, error: r.error, account_name: a.account_name });
     } catch (e) {
-      results.push({ id: a.id, ok: false, error: (e as Error).message });
+      const msg = (e as Error).message;
+      console.error(`[syncAllAccounts] threw for account ${a.account_name ?? a.fb_account_id}:`, e);
+      results.push({ id: a.id, ok: false, error: msg, account_name: a.account_name });
     }
   }
 
@@ -407,16 +420,17 @@ async function evaluateBudgetAlerts() {
 export async function syncConnectionAccounts(connectionId: string) {
   const { data: accounts } = await supabaseAdmin
     .from("ad_accounts")
-    .select("id")
+    .select("id,account_name,fb_account_id")
     .eq("connection_id", connectionId)
     .eq("is_active", true);
-  const results: Array<{ id: string; ok: boolean; error?: string | null }> = [];
+  const results: Array<{ id: string; ok: boolean; error?: string | null; account_name?: string | null }> = [];
   for (const a of accounts ?? []) {
     try {
       const r = await syncAdAccount(a.id);
-      results.push({ id: a.id, ok: r.ok, error: r.error });
+      results.push({ id: a.id, ok: r.ok, error: r.error, account_name: a.account_name });
     } catch (e) {
-      results.push({ id: a.id, ok: false, error: (e as Error).message });
+      console.error(`[syncConnectionAccounts] threw for ${a.account_name ?? a.fb_account_id}:`, e);
+      results.push({ id: a.id, ok: false, error: (e as Error).message, account_name: a.account_name });
     }
   }
   return { count: results.length, results };
