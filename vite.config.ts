@@ -14,6 +14,6 @@ export default defineConfig({
   },
   // Force-enable nitro with Vercel preset so build outputs to `.vercel/output`
   nitro: {
-    preset: "vercel",
+    preset: "cloudflare-pages",
   },
 });
