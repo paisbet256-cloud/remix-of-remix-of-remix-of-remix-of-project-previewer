@@ -137,8 +137,6 @@ export const saveSettings = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
-// Run a full token health check (scopes + expiry) on demand. Also runs at the
-// start of every cron sync via syncAllAccounts → checkTokenHealth.
 export const checkTokenHealthNow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -147,7 +145,6 @@ export const checkTokenHealthNow = createServerFn({ method: "POST" })
     return checkTokenHealth();
   });
 
-// Rotate (or clear) a per-client portal access token used for verified ownership.
 export const rotatePortalToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { client_id: string; clear?: boolean }) =>
@@ -167,7 +164,6 @@ export const rotatePortalToken = createServerFn({ method: "POST" })
     return { token };
   });
 
-// Reveal the active portal token (admin only). Returns null if not set.
 export const getPortalToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: { client_id: string }) => z.object({ client_id: z.string().uuid() }).parse(d))
@@ -262,8 +258,6 @@ export const importVisibleAdAccounts = createServerFn({ method: "POST" })
     return { imported: imported?.length ?? 0, syncResults };
   });
 
-// Detect Business Manager accounts the System User token has access to.
-// Used to auto-suggest Business ID in Settings.
 export const detectBusinessesFromToken = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -280,7 +274,6 @@ export const detectBusinessesFromToken = createServerFn({ method: "POST" })
     }
   });
 
-// ============ List available FB ad accounts (for connecting new accounts) ============
 export const listAvailableAdAccounts = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -418,9 +411,6 @@ export const createClient = createServerFn({ method: "POST" })
     }).select().single();
     if (error) throw new Error(error.message);
 
-    // Connect selected ad accounts to this client. Accounts imported during sync
-    // first live under the internal "Meta Imported Accounts" bucket, so move
-    // those rows instead of hiding them or creating duplicates.
     if (data.ad_account_ids && data.ad_account_ids.length > 0 && row) {
       const { data: s } = await supabaseAdmin.from("app_settings").select("fb_system_user_token").eq("id", 1).maybeSingle();
       const token = s?.fb_system_user_token;
@@ -522,7 +512,6 @@ export const connectAdAccount = createServerFn({ method: "POST" })
       business_name: info.business?.name ?? null,
     }).select().single();
     if (error) throw new Error(error.message);
-    // Kick off first sync
     try {
       const { syncAdAccount } = await import("./sync.server");
       await syncAdAccount(row.id);
@@ -565,13 +554,11 @@ export const refreshAllData = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const supabaseAdmin = await requireAdmin(context.userId);
-    // Wipe cached metric tables (keep ad_accounts + clients + settings).
     await supabaseAdmin.from("insights_snapshots").delete().not("id", "is", null);
     await supabaseAdmin.from("ads").delete().not("id", "is", null);
     await supabaseAdmin.from("ad_sets").delete().not("id", "is", null);
     await supabaseAdmin.from("campaigns").delete().not("id", "is", null);
     await supabaseAdmin.from("sync_logs").delete().not("id", "is", null);
-    // Reset cached totals on accounts so dashboard zeros until sync completes.
     await supabaseAdmin.from("ad_accounts").update({
       total_spend: 0, total_reach: 0, total_results: 0, active_campaigns: 0,
       last_sync_status: null, last_sync_error: null, last_sync_at: null,
@@ -581,66 +568,172 @@ export const refreshAllData = createServerFn({ method: "POST" })
     return { cleared: true, ...res };
   });
 
-// ============ Re-test token + re-import visible accounts in one click ============
+// ============ Re-test token + re-import — FIXED: multi-BM support ============
 export const retestAndReimport = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const supabaseAdmin = await requireAdmin(context.userId);
+    const { fb } = await import("./api.server");
+    const { syncAdAccount } = await import("./sync.server");
+
+    // ✅ FIX: প্রথমে সব active multi-BM connections থেকে re-import করো
+    const { data: connections } = await supabaseAdmin
+      .from("meta_connections")
+      .select("id,label,fb_system_user_token,fb_business_id")
+      .eq("is_active", true);
+
+    let connImported = 0;
+    const connSyncResults: Array<{ id: string; fb_account_id: string; account_name: string | null; ok: boolean; error?: string | null; itemsSynced?: number }> = [];
+
+    for (const conn of connections ?? []) {
+      if (!conn.fb_system_user_token) continue;
+      try {
+        const { accounts } = await fb.listAdAccountsDetailed(conn.fb_system_user_token, conn.fb_business_id);
+        if (accounts.length === 0) continue;
+
+        const bucketSlug = `meta-imported-${conn.id.slice(0, 8)}`;
+        const { data: existingClient } = await supabaseAdmin.from("clients").select("id").eq("slug", bucketSlug).maybeSingle();
+        let clientId = existingClient?.id as string | undefined;
+        if (!clientId) {
+          const { data: client, error: clientError } = await supabaseAdmin.from("clients").insert({
+            name: `Meta Imported — ${conn.label}`,
+            slug: bucketSlug,
+            company: "Facebook Ads",
+            created_by: context.userId,
+          }).select("id").single();
+          if (clientError) continue;
+          clientId = client.id;
+        }
+
+        const rows = accounts.map((a) => ({
+          client_id: clientId,
+          connection_id: conn.id,
+          fb_account_id: a.id,
+          account_name: a.name,
+          currency: a.currency,
+          timezone_name: a.timezone_name,
+          account_status: a.account_status,
+          business_name: a.business?.name ?? null,
+          is_active: true,
+        }));
+        const { data: imported } = await supabaseAdmin
+          .from("ad_accounts")
+          .upsert(rows, { onConflict: "fb_account_id" })
+          .select("id,fb_account_id,account_name");
+
+        // Ensure connection_id is set for existing rows too
+        await supabaseAdmin
+          .from("ad_accounts")
+          .update({ connection_id: conn.id })
+          .in("fb_account_id", accounts.map((a) => a.id));
+
+        connImported += imported?.length ?? 0;
+
+        for (const a of imported ?? []) {
+          try {
+            const r = await syncAdAccount(a.id);
+            connSyncResults.push({ id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name, ok: r.ok, error: r.error, itemsSynced: r.itemsSynced });
+          } catch (e: any) {
+            connSyncResults.push({ id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name, ok: false, error: e?.message ?? "sync failed" });
+          }
+        }
+      } catch (_e) {
+        // individual connection error — continue with next
+      }
+    }
+
+    // Legacy single-BM re-import (as fallback / additional)
     const { data: s } = await supabaseAdmin.from("app_settings")
       .select("fb_system_user_token,fb_business_id").eq("id", 1).maybeSingle();
     const token = s?.fb_system_user_token;
-    if (!token) return { ok: false, error: "No Facebook token configured.", imported: 0 };
-    const { fb } = await import("./api.server");
+
+    if (!token) {
+      if (connImported > 0) {
+        return { ok: true, imported: connImported, syncResults: connSyncResults };
+      }
+      return { ok: false, error: "No Facebook token configured (legacy or multi-BM).", imported: 0 };
+    }
+
     const { checkTokenHealth } = await import("./permissions.server");
     const health = await checkTokenHealth();
     if (health.status !== "ok") {
+      if (connImported > 0) {
+        return { ok: true, imported: connImported, syncResults: connSyncResults, health };
+      }
       return { ok: false, error: health.error ?? `Token status: ${health.status}`, health, imported: 0 };
     }
+
     const { accounts } = await fb.listAdAccountsDetailed(token, s?.fb_business_id);
-    if (accounts.length === 0) {
+    if (accounts.length === 0 && connImported === 0) {
       return { ok: false, error: "Token works, but 0 ad accounts visible. Assign assets in Meta Business Settings.", imported: 0, health };
     }
+
     const { data: existingClient } = await supabaseAdmin.from("clients").select("id").eq("slug", "meta-imported-accounts").maybeSingle();
     let clientId = existingClient?.id as string | undefined;
-    if (!clientId) {
+    if (!clientId && accounts.length > 0) {
       const { data: created, error: ce } = await supabaseAdmin.from("clients").insert({
         name: "Meta Imported Accounts", slug: "meta-imported-accounts", company: "Facebook Ads", created_by: context.userId,
       }).select("id").single();
       if (ce) throw new Error(ce.message);
       clientId = created.id;
     }
-    const rows = accounts.map((a) => ({
-      client_id: clientId, fb_account_id: a.id, account_name: a.name,
-      currency: a.currency, timezone_name: a.timezone_name,
-      account_status: a.account_status, business_name: a.business?.name ?? null, is_active: true,
-    }));
-    const { data: imported, error } = await supabaseAdmin.from("ad_accounts")
-      .upsert(rows, { onConflict: "fb_account_id" }).select("id,fb_account_id,account_name");
-    if (error) throw new Error(error.message);
-    const { syncAdAccount } = await import("./sync.server");
-    const syncResults: Array<{ id: string; fb_account_id: string; account_name: string | null; ok: boolean; error?: string | null; itemsSynced?: number }> = [];
-    for (const a of imported ?? []) {
-      try {
-        const r = await syncAdAccount(a.id);
-        syncResults.push({ id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name, ok: r.ok, error: r.error, itemsSynced: r.itemsSynced });
-      } catch (e: any) {
-        syncResults.push({ id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name, ok: false, error: e?.message ?? "sync failed" });
+
+    const legacySyncResults: Array<{ id: string; fb_account_id: string; account_name: string | null; ok: boolean; error?: string | null; itemsSynced?: number }> = [];
+
+    if (accounts.length > 0 && clientId) {
+      const rows = accounts.map((a) => ({
+        client_id: clientId, fb_account_id: a.id, account_name: a.name,
+        currency: a.currency, timezone_name: a.timezone_name,
+        account_status: a.account_status, business_name: a.business?.name ?? null, is_active: true,
+      }));
+      const { data: imported, error } = await supabaseAdmin.from("ad_accounts")
+        .upsert(rows, { onConflict: "fb_account_id" }).select("id,fb_account_id,account_name");
+      if (error) throw new Error(error.message);
+
+      for (const a of imported ?? []) {
+        try {
+          const r = await syncAdAccount(a.id);
+          legacySyncResults.push({ id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name, ok: r.ok, error: r.error, itemsSynced: r.itemsSynced });
+        } catch (e: any) {
+          legacySyncResults.push({ id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name, ok: false, error: e?.message ?? "sync failed" });
+        }
       }
+      connImported += imported?.length ?? 0;
     }
-    return { ok: true, imported: imported?.length ?? 0, accounts, syncResults, health };
+
+    return {
+      ok: true,
+      imported: connImported,
+      accounts,
+      syncResults: [...connSyncResults, ...legacySyncResults],
+      health,
+    };
   });
 
-// ============ Campaign-mapping verification: diff FB live IDs vs DB ============
+// ============ Campaign-mapping verification — FIXED: per-account token ============
 export const verifyCampaignMapping = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const supabaseAdmin = await requireAdmin(context.userId);
-    const { data: s } = await supabaseAdmin.from("app_settings").select("fb_system_user_token").eq("id", 1).maybeSingle();
-    const token = s?.fb_system_user_token;
-    if (!token) throw new Error("No Facebook token configured");
     const { fb } = await import("./api.server");
+
+    // ✅ FIX: প্রতিটা account এর নিজস্ব connection token খোঁজো, না থাকলে legacy token ব্যবহার করো
+    async function getTokenForAccountLocal(connectionId: string | null): Promise<string | null> {
+      if (connectionId) {
+        const { data: c } = await supabaseAdmin
+          .from("meta_connections")
+          .select("fb_system_user_token")
+          .eq("id", connectionId)
+          .maybeSingle();
+        if (c?.fb_system_user_token) return c.fb_system_user_token;
+      }
+      const { data: s } = await supabaseAdmin.from("app_settings").select("fb_system_user_token").eq("id", 1).maybeSingle();
+      return s?.fb_system_user_token ?? null;
+    }
+
     const { data: accounts } = await supabaseAdmin.from("ad_accounts")
-      .select("id,fb_account_id,account_name").eq("is_active", true);
+      .select("id,fb_account_id,account_name,connection_id").eq("is_active", true);
+
     const report: Array<{
       ad_account_id: string; fb_account_id: string; account_name: string | null;
       fb_count: number; db_count: number; matched: number;
@@ -649,8 +742,19 @@ export const verifyCampaignMapping = createServerFn({ method: "POST" })
       diffs: Array<{ id: string; field: "name" | "status"; fb: string | null; db: string | null }>;
       error?: string;
     }> = [];
+
     for (const a of accounts ?? []) {
       try {
+        const token = await getTokenForAccountLocal((a as any).connection_id ?? null);
+        if (!token) {
+          report.push({
+            ad_account_id: a.id, fb_account_id: a.fb_account_id, account_name: a.account_name,
+            fb_count: 0, db_count: 0, matched: 0, missing_in_db: [], stale_in_db: [], diffs: [],
+            error: "No token configured — assign a Business Manager connection or set legacy token",
+          });
+          continue;
+        }
+
         const live = await fb.listCampaigns(a.fb_account_id, token);
         const { data: dbRows } = await supabaseAdmin.from("campaigns")
           .select("fb_campaign_id,name,status,effective_status").eq("ad_account_id", a.id);
@@ -787,10 +891,6 @@ export const clearAllData = createServerFn({ method: "POST" })
     return { ok: true, result: data };
   });
 
-// ============ List ALL ad sets (live from Meta) for Campaign Assignment ============
-// Returns every ad set the System User token can see, with parent campaign
-// name and a representative ad thumbnail. Used in the "Add New Partner"
-// Campaign Assignment panel so the user can search/select at ad-set level.
 export const listAvailableAdSets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
@@ -805,7 +905,6 @@ export const listAvailableAdSets = createServerFn({ method: "POST" })
 
     const { fb } = await import("./api.server");
 
-    // Live list of ad accounts visible to the token.
     let liveAccounts: any[] = [];
     let liveError: string | null = null;
     try {
@@ -814,7 +913,6 @@ export const listAvailableAdSets = createServerFn({ method: "POST" })
       liveError = e?.message ?? "Could not reach Meta";
     }
 
-    // Existing internal mapping (for showing "already assigned" + linking to internal UUIDs).
     const [{ data: existingAccounts }, { data: existingCampaigns }] = await Promise.all([
       supabaseAdmin
         .from("ad_accounts")
@@ -830,7 +928,6 @@ export const listAvailableAdSets = createServerFn({ method: "POST" })
       if (c.fb_campaign_id) internalCampaignByFb.set(c.fb_campaign_id, c.id);
     }
 
-    // Limit how many accounts we fan-out to keep latency sane.
     const MAX_ACCOUNTS = 20;
     const accountsToFetch = liveAccounts.slice(0, MAX_ACCOUNTS);
 
@@ -862,7 +959,6 @@ export const listAvailableAdSets = createServerFn({ method: "POST" })
           const campaignNameById = new Map<string, string>();
           for (const c of campaigns as any[]) campaignNameById.set(c.id, c.name);
 
-          // Pick first available thumbnail per adset_id.
           const thumbByAdset = new Map<string, string>();
           for (const ad of ads as any[]) {
             const adsetId = ad.adset_id;

@@ -305,7 +305,6 @@ export async function syncAdAccount(adAccountId: string) {
       ? `[FB ${e.code ?? ""}] ${e.message}${e.fbtrace_id ? ` (trace ${e.fbtrace_id})` : ""}`
       : (e as Error).message;
 
-    // Surface to server logs so we can see the full stack in `wrangler tail` / Cloudflare dashboard
     console.error(
       `[syncAdAccount] FAILED account=${account.account_name ?? account.fb_account_id} (${account.id})`,
       "\n  error:", error,
@@ -342,11 +341,21 @@ export async function syncAdAccount(adAccountId: string) {
 
 export async function syncAllAccounts() {
   const health = await checkTokenHealth();
+  const legacyToken = await getLegacyToken();
+
+  // ✅ FIX: Legacy token invalid হলেও multi-BM connections থাকলে sync চালিয়ে যাও
   if (!health.ok && (health.status === "invalid" || health.status === "missing")) {
-    return { count: 0, results: [], skipped: true, tokenHealth: health };
+    const { count: connCount } = await supabaseAdmin
+      .from("meta_connections")
+      .select("id", { count: "exact", head: true })
+      .eq("is_active", true);
+    if ((connCount ?? 0) === 0) {
+      // কোনো multi-BM connection নেই — skip করো
+      return { count: 0, results: [], skipped: true, tokenHealth: health };
+    }
+    // Multi-BM connections আছে — sync চালিয়ে যাও
   }
 
-  const legacyToken = await getLegacyToken();
   const { count: existingCount } = await supabaseAdmin
     .from("ad_accounts")
     .select("id", { count: "exact", head: true })
