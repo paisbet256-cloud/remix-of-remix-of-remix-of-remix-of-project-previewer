@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Layers } from "lucide-react";
 import { StatusBadge } from "./campaigns";
+import { applyMarkup, getMarkup } from "@/lib/commission";
 
 export const Route = createFileRoute("/_authenticated/ad-sets")({
   head: () => ({ meta: [{ title: "Ad Sets — GrowVibe Ads Solution" }] }),
@@ -13,7 +14,7 @@ function AdSetsPage() {
   const { data: items } = useQuery({
     queryKey: ["adsets"],
     queryFn: async () => {
-      const { data } = await supabase.from("ad_sets").select("*, campaign:campaigns(name), ad_account:ad_accounts(account_name, currency, client:clients(name))").order("spend", { ascending: false });
+      const { data } = await supabase.from("ad_sets").select("*, campaign:campaigns(name), ad_account:ad_accounts(account_name, currency, client:clients(name,commission_enabled,commission_percent))").order("spend", { ascending: false });
       return data ?? [];
     },
   });
@@ -42,19 +43,29 @@ function AdSetsPage() {
           <tbody>
             {(items ?? []).length === 0 ? (
               <tr><td colSpan={9} className="text-center py-12 text-muted-foreground"><Layers className="size-10 mx-auto opacity-30 mb-2" />No ad sets yet</td></tr>
-            ) : (items ?? []).map((a: any) => (
+            ) : (items ?? []).map((a: any) => {
+              const client = a.ad_account?.client;
+              const markup = getMarkup(client?.commission_enabled, client?.commission_percent);
+              const displaySpend = applyMarkup(a.spend, client?.commission_enabled, client?.commission_percent);
+              return (
               <tr key={a.id} className="border-t border-border/40 hover:bg-surface/40">
                 <td className="px-4 py-3 max-w-[280px]"><div className="font-medium truncate">{a.name}</div><div className="text-xs text-muted-foreground">{a.optimization_goal}</div></td>
                 <td className="px-4 py-3 text-xs max-w-[200px] truncate">{a.campaign?.name}</td>
                 <td className="px-4 py-3"><StatusBadge status={a.effective_status ?? a.status} /></td>
-                <td className="px-4 py-3 text-right font-medium">{a.ad_account?.currency ?? "$"}{Number(a.spend).toFixed(2)}</td>
+                <td className="px-4 py-3 text-right font-medium">
+                  {a.ad_account?.currency ?? "$"}{displaySpend.toFixed(2)}
+                  {markup > 1 && (
+                    <div className="text-[10px] text-muted-foreground font-normal">+{(((markup - 1) * 100)).toFixed(0)}% commission</div>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right">{Number(a.impressions).toLocaleString()}</td>
                 <td className="px-4 py-3 text-right">{Number(a.clicks).toLocaleString()}</td>
                 <td className="px-4 py-3 text-right">{Number(a.ctr).toFixed(2)}%</td>
                 <td className="px-4 py-3 text-right">${Number(a.cpm).toFixed(2)}</td>
                 <td className="px-4 py-3 text-right font-medium text-primary">{Number(a.results).toLocaleString()}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

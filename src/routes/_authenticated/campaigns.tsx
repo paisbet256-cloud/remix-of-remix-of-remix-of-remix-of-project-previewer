@@ -1,7 +1,8 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Megaphone, ArrowUpRight } from "lucide-react";
+import { Megaphone } from "lucide-react";
+import { applyMarkup, getMarkup } from "@/lib/commission";
 
 export const Route = createFileRoute("/_authenticated/campaigns")({
   head: () => ({ meta: [{ title: "Campaigns — GrowVibe Ads Solution" }] }),
@@ -12,7 +13,7 @@ function CampaignsPage() {
   const { data: campaigns } = useQuery({
     queryKey: ["campaigns"],
     queryFn: async () => {
-      const { data } = await supabase.from("campaigns").select("*, ad_account:ad_accounts(account_name, currency, client:clients(name,slug))").order("spend", { ascending: false });
+      const { data } = await supabase.from("campaigns").select("*, ad_account:ad_accounts(account_name, currency, client:clients(name,slug,commission_enabled,commission_percent))").order("spend", { ascending: false });
       return data ?? [];
     },
   });
@@ -42,15 +43,24 @@ function CampaignsPage() {
           <tbody>
             {(campaigns ?? []).length === 0 ? (
               <tr><td colSpan={10} className="text-center py-12 text-muted-foreground"><Megaphone className="size-10 mx-auto opacity-30 mb-2" />No campaigns yet — connect an ad account in <Link to="/clients" className="text-primary underline">Clients</Link></td></tr>
-            ) : (campaigns ?? []).map((c: any) => (
+            ) : (campaigns ?? []).map((c: any) => {
+              const client = c.ad_account?.client;
+              const markup = getMarkup(client?.commission_enabled, client?.commission_percent);
+              const displaySpend = applyMarkup(c.spend, client?.commission_enabled, client?.commission_percent);
+              return (
               <tr key={c.id} className="border-t border-border/40 hover:bg-surface/40">
                 <td className="px-4 py-3 max-w-[300px]">
                   <div className="font-medium truncate">{c.name}</div>
                   <div className="text-xs text-muted-foreground">{c.objective}</div>
                 </td>
-                <td className="px-4 py-3 text-xs">{c.ad_account?.client?.name ?? "—"}</td>
+                <td className="px-4 py-3 text-xs">{client?.name ?? "—"}</td>
                 <td className="px-4 py-3"><StatusBadge status={c.effective_status ?? c.status} /></td>
-                <td className="px-4 py-3 text-right font-medium">{c.ad_account?.currency ?? "$"}{Number(c.spend).toFixed(2)}</td>
+                <td className="px-4 py-3 text-right font-medium">
+                  {c.ad_account?.currency ?? "$"}{displaySpend.toFixed(2)}
+                  {markup > 1 && (
+                    <div className="text-[10px] text-muted-foreground font-normal">+{(((markup - 1) * 100)).toFixed(0)}% commission</div>
+                  )}
+                </td>
                 <td className="px-4 py-3 text-right">{Number(c.reach).toLocaleString()}</td>
                 <td className="px-4 py-3 text-right">{Number(c.impressions).toLocaleString()}</td>
                 <td className="px-4 py-3 text-right">{Number(c.clicks).toLocaleString()}</td>
@@ -58,7 +68,8 @@ function CampaignsPage() {
                 <td className="px-4 py-3 text-right">${Number(c.cpc).toFixed(2)}</td>
                 <td className="px-4 py-3 text-right font-medium text-primary">{Number(c.results).toLocaleString()}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

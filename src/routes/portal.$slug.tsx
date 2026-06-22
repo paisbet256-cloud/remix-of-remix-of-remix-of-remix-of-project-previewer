@@ -223,9 +223,11 @@ const [pendingRange, setPendingRange] = useState<DateRange>("all");
   const remaining = totalDeposit - displaySpend;
   const budgetPct = totalDeposit > 0 ? (displaySpend / totalDeposit) * 100 : 0;
 
-  // Snapshot calcs — markup applied to currency outputs only
-  const cpm = totals.impressions > 0 ? (mk(totals.spend) / totals.impressions) * 1000 : 0;
-  const cpc = totals.clicks > 0 ? mk(totals.spend) / totals.clicks : 0;
+  // Snapshot calcs — per spec, ONLY spend & cost-per-result are marked up.
+  // CPM & CPC reflect the real Meta spend (no markup) so the underlying
+  // auction economics are not distorted on the client view.
+  const cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+  const cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
   const ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
   const resultRate = totals.impressions > 0 ? (totals.results / totals.impressions) * 100 : 0;
   const reachRate = totals.impressions > 0 ? (totals.reach / totals.impressions) * 100 : 0;

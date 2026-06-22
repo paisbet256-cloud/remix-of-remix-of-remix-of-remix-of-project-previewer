@@ -2,11 +2,14 @@ import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { useQueryClient } from "@tanstack/react-query";
-import { createClient, listAvailableAdAccounts, listAvailableAdSets, syncAllAccountsNow } from "@/lib/fb/admin.functions";
+import { z } from "zod";
+import { supabase } from "@/integrations/supabase/client";
+import { createClient, updateClient, listAvailableAdAccounts, listAvailableAdSets, syncAllAccountsNow } from "@/lib/fb/admin.functions";
 import { toast } from "sonner";
 import { ArrowLeft, Search, Lock, ShieldCheck, ChevronDown, Loader2, Check, AlertCircle, RefreshCw, Clock, Wifi, WifiOff } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/clients_/new")({
+  validateSearch: (s: Record<string, unknown>) => z.object({ edit: z.string().uuid().optional() }).parse(s),
   head: () => ({ meta: [{ title: "Add New Partner — GrowVibe Ads Solution" }] }),
   component: AddPartnerPage,
 });
@@ -14,7 +17,10 @@ export const Route = createFileRoute("/_authenticated/clients_/new")({
 function AddPartnerPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { edit: editId } = Route.useSearch();
+  const isEdit = !!editId;
   const createFn = useServerFn(createClient);
+  const updateFn = useServerFn(updateClient);
   const listAccountsFn = useServerFn(listAvailableAdAccounts);
   const listAdSetsFn = useServerFn(listAvailableAdSets);
   const syncNowFn = useServerFn(syncAllAccountsNow);
@@ -91,6 +97,39 @@ function AddPartnerPage() {
 
   useEffect(() => { loadAccounts(); }, []);
 
+  // Edit mode — prefill form fields from existing client row.
+  useEffect(() => {
+    if (!editId) return;
+    let cancelled = false;
+    (async () => {
+      const { data, error } = await supabase
+        .from("clients")
+        .select("name,company,contact_email,contact_phone,website,address,deposit_amount,deposit_currency,bdt_rate,commission_enabled,commission_percent,commission_notes")
+        .eq("id", editId)
+        .maybeSingle();
+      if (cancelled) return;
+      if (error || !data) {
+        toast.error(error?.message ?? "Client not found");
+        return;
+      }
+      setName(data.name ?? "");
+      setCompany(data.company ?? "");
+      setEmail(data.contact_email ?? "");
+      setPhone(data.contact_phone ?? "");
+      setWebsite(data.website ?? "");
+      setAddress(data.address ?? "");
+      setDepositAmount(data.deposit_amount != null ? String(data.deposit_amount) : "");
+      if (data.bdt_rate != null) {
+        setBdtRate(String(data.bdt_rate));
+        setShowConverter(true);
+      }
+      setCommissionEnabled(!!data.commission_enabled);
+      setCommissionPct(data.commission_percent != null ? String(data.commission_percent) : "");
+      setCommissionNotes(data.commission_notes ?? "");
+    })();
+    return () => { cancelled = true; };
+  }, [editId]);
+
   const runSyncNow = async () => {
     setSyncing(true);
     const tId = toast.loading("Refreshing campaigns from Meta…");
@@ -156,34 +195,57 @@ function AddPartnerPage() {
     if (!name.trim()) { toast.error("Client name is required"); return; }
     setSaving(true);
     try {
-      await createFn({
-        data: {
-          name: name.trim(),
-          company: company || undefined,
-          contact_email: email || undefined,
-          contact_phone: phone || undefined,
-          website: website || undefined,
-          address: address || undefined,
-          deposit_amount: Number(depositAmount) || 0,
-          deposit_currency: bdtRate && Number(bdtRate) > 0 ? "BDT" : "USD",
-          bdt_rate: bdtRate ? Number(bdtRate) : null,
-          commission_enabled: commissionEnabled,
-          commission_percent: Number(commissionPct) || 0,
-          commission_notes: commissionNotes || undefined,
-          // Derive distinct accounts + parent-campaign internal IDs from the
-          // selected ad sets. Account assignment stays automatic so the
-          // selected ad sets remain visible to the client portal.
-          ad_account_ids: Array.from(new Set(
-            adsets.filter((a) => selectedAdsets.has(a.id)).map((a) => a.account_id)
-          )),
-          campaign_ids: Array.from(new Set(
-            adsets
-              .filter((a) => selectedAdsets.has(a.id) && a.internal_campaign_id)
-              .map((a) => a.internal_campaign_id as string)
-          )),
-        },
-      });
-      toast.success("Partner saved");
+      if (isEdit && editId) {
+        // Edit mode — update existing client's profile + commission fields.
+        // Campaign assignments are managed separately and are not touched here.
+        await updateFn({
+          data: {
+            id: editId,
+            name: name.trim(),
+            company: company || undefined,
+            contact_email: email || undefined,
+            contact_phone: phone || undefined,
+            website: website || undefined,
+            address: address || undefined,
+            deposit_amount: Number(depositAmount) || 0,
+            deposit_currency: bdtRate && Number(bdtRate) > 0 ? "BDT" : "USD",
+            bdt_rate: bdtRate ? Number(bdtRate) : null,
+            commission_enabled: commissionEnabled,
+            commission_percent: Number(commissionPct) || 0,
+            commission_notes: commissionNotes || undefined,
+          },
+        });
+        toast.success("Partner updated");
+      } else {
+        await createFn({
+          data: {
+            name: name.trim(),
+            company: company || undefined,
+            contact_email: email || undefined,
+            contact_phone: phone || undefined,
+            website: website || undefined,
+            address: address || undefined,
+            deposit_amount: Number(depositAmount) || 0,
+            deposit_currency: bdtRate && Number(bdtRate) > 0 ? "BDT" : "USD",
+            bdt_rate: bdtRate ? Number(bdtRate) : null,
+            commission_enabled: commissionEnabled,
+            commission_percent: Number(commissionPct) || 0,
+            commission_notes: commissionNotes || undefined,
+            // Derive distinct accounts + parent-campaign internal IDs from the
+            // selected ad sets. Account assignment stays automatic so the
+            // selected ad sets remain visible to the client portal.
+            ad_account_ids: Array.from(new Set(
+              adsets.filter((a) => selectedAdsets.has(a.id)).map((a) => a.account_id)
+            )),
+            campaign_ids: Array.from(new Set(
+              adsets
+                .filter((a) => selectedAdsets.has(a.id) && a.internal_campaign_id)
+                .map((a) => a.internal_campaign_id as string)
+            )),
+          },
+        });
+        toast.success("Partner saved");
+      }
       qc.invalidateQueries({ queryKey: ["clients"] });
       navigate({ to: "/clients" });
     } catch (e: any) {
@@ -198,8 +260,8 @@ function AddPartnerPage() {
       {/* Header */}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold">Add New Partner</h1>
-          <p className="text-muted-foreground text-sm mt-1">Create a new client profile and assign campaign access</p>
+          <h1 className="text-2xl sm:text-3xl font-bold">{isEdit ? "Edit Partner" : "Add New Partner"}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{isEdit ? "Update client profile, deposit and commission settings" : "Create a new client profile and assign campaign access"}</p>
         </div>
         <Link to="/clients" className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface hover:bg-surface-elevated px-4 py-2 text-sm font-semibold">
           <ArrowLeft className="size-4" /> Back to Clients
@@ -531,7 +593,7 @@ function AddPartnerPage() {
           className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-6 py-2.5 text-sm font-semibold shadow-lg shadow-emerald-500/20 disabled:opacity-60"
         >
           {saving ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
-          Save Partner
+          {isEdit ? "Update Partner" : "Save Partner"}
         </button>
       </div>
 

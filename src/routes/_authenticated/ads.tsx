@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Image as ImageIcon } from "lucide-react";
 import { StatusBadge } from "./campaigns";
+import { applyMarkup, getMarkup } from "@/lib/commission";
 
 export const Route = createFileRoute("/_authenticated/ads")({
   head: () => ({ meta: [{ title: "Ads — GrowVibe Ads Solution" }] }),
@@ -15,7 +16,7 @@ function AdsPage() {
     queryFn: async () => {
       const { data } = await supabase
         .from("ads")
-        .select("*, campaign:campaigns(name), ad_set:ad_sets(name), ad_account:ad_accounts(currency, client:clients(name))")
+        .select("*, campaign:campaigns(name), ad_set:ad_sets(name), ad_account:ad_accounts(currency, client:clients(name,commission_enabled,commission_percent))")
         .order("spend", { ascending: false });
       return data ?? [];
     },
@@ -51,7 +52,11 @@ function AdsPage() {
                 </td>
               </tr>
             ) : (
-              (items ?? []).map((a: any) => (
+              (items ?? []).map((a: any) => {
+                const client = a.ad_account?.client;
+                const markup = getMarkup(client?.commission_enabled, client?.commission_percent);
+                const displaySpend = applyMarkup(a.spend, client?.commission_enabled, client?.commission_percent);
+                return (
                 <tr key={a.id} className="border-t border-border/40 hover:bg-surface/40">
                   <td className="px-4 py-3 max-w-[280px]">
                     <div className="flex items-center gap-3 min-w-0">
@@ -64,7 +69,7 @@ function AdsPage() {
                       </div>
                       <div className="min-w-0">
                         <div className="font-medium truncate">{a.name}</div>
-                        <div className="text-xs text-muted-foreground truncate">{a.ad_account?.client?.name ?? ""}</div>
+                        <div className="text-xs text-muted-foreground truncate">{client?.name ?? ""}</div>
                       </div>
                     </div>
                   </td>
@@ -73,14 +78,20 @@ function AdsPage() {
                     <div className="text-muted-foreground truncate">{a.ad_set?.name}</div>
                   </td>
                   <td className="px-4 py-3"><StatusBadge status={a.effective_status ?? a.status} /></td>
-                  <td className="px-4 py-3 text-right font-medium">{a.ad_account?.currency ?? "$"}{Number(a.spend).toFixed(2)}</td>
+                  <td className="px-4 py-3 text-right font-medium">
+                    {a.ad_account?.currency ?? "$"}{displaySpend.toFixed(2)}
+                    {markup > 1 && (
+                      <div className="text-[10px] text-muted-foreground font-normal">+{(((markup - 1) * 100)).toFixed(0)}% commission</div>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right">{Number(a.impressions).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right">{Number(a.clicks).toLocaleString()}</td>
                   <td className="px-4 py-3 text-right">{Number(a.ctr).toFixed(2)}%</td>
                   <td className="px-4 py-3 text-right">${Number(a.cpm).toFixed(2)}</td>
                   <td className="px-4 py-3 text-right font-medium text-primary">{Number(a.results).toLocaleString()}</td>
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
