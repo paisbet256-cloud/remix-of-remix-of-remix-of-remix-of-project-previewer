@@ -9,6 +9,28 @@ const INSIGHTS_ATTRIBUTION_PARAMS = {
   action_report_time: "conversion",
 };
 
+// Effective-status filter we attach to /insights calls at adset & ad levels.
+// Without this, Meta only returns rows for entities that actually delivered
+// in the date range — PAUSED / brand-new / zero-delivery ad sets silently
+// disappear from the response, which is exactly why the Ad Set Performance
+// table was rendering all zeros while the campaign rollup at the top showed
+// real numbers. We explicitly request every visible status so the response
+// includes a row per known ad set even when the metric values are zero.
+const ADSET_INSIGHTS_STATUSES = [
+  "ACTIVE", "PAUSED", "ARCHIVED",
+  "ADSET_PAUSED", "CAMPAIGN_PAUSED",
+  "IN_PROCESS", "WITH_ISSUES",
+  "PENDING_REVIEW", "DISAPPROVED",
+  "PREAPPROVED", "PENDING_BILLING_INFO",
+];
+const AD_INSIGHTS_STATUSES = [
+  "ACTIVE", "PAUSED", "ARCHIVED",
+  "ADSET_PAUSED", "CAMPAIGN_PAUSED",
+  "IN_PROCESS", "WITH_ISSUES",
+  "PENDING_REVIEW", "DISAPPROVED",
+  "PREAPPROVED", "PENDING_BILLING_INFO",
+];
+
 function formatDate(d: Date) {
   return d.toISOString().slice(0, 10);
 }
@@ -176,14 +198,29 @@ export const fb = {
       limit: "500",
     }, token);
   },
+  // FIX: when level is adset/ad we attach an effective_status filter so Meta
+  // also returns rows for PAUSED / zero-delivery entities. Without it the
+  // default response only includes entities that delivered impressions in the
+  // window, which is what made the Ad Set Performance table render zeros for
+  // paused / brand-new ad sets.
   async getInsights(actId: string, token: string, datePreset = "last_7d", level: "account" | "campaign" | "adset" | "ad" = "campaign") {
-    return fbFetchAll(`/${actId}/insights`, {
+    const params: Record<string, string> = {
       level,
       date_preset: datePreset,
       fields: "campaign_id,campaign_name,adset_id,adset_name,ad_id,ad_name,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,actions,optimization_goal,date_start,date_stop",
       limit: "500",
       ...INSIGHTS_ATTRIBUTION_PARAMS,
-    }, token);
+    };
+    if (level === "adset") {
+      params.filtering = JSON.stringify([
+        { field: "adset.effective_status", operator: "IN", value: ADSET_INSIGHTS_STATUSES },
+      ]);
+    } else if (level === "ad") {
+      params.filtering = JSON.stringify([
+        { field: "ad.effective_status", operator: "IN", value: AD_INSIGHTS_STATUSES },
+      ]);
+    }
+    return fbFetchAll(`/${actId}/insights`, params, token);
   },
   async getAccountInsights(actId: string, token: string, datePreset = "last_7d") {
     const rows = await fbFetchAll(`/${actId}/insights`, {
@@ -228,10 +265,11 @@ export const fb = {
     else params.date_preset = datePreset;
     return fbFetchAll(`/${actId}/insights`, params, token);
   },
-  // NEW — Per-adset daily time series. We use this so the portal always has
-  // ground-truth metrics for every ad set even when Meta's "maximum" preset
-  // returns no row for a brand-new ad set on day 1.
-  async getAdSetTimeSeries(actId: string, token: string, datePreset = "last_30d") {
+  // FIX: per-adset time series now also attaches the effective_status filter,
+  // so daily snapshots are written even for PAUSED / zero-delivery ad sets.
+  // We also accept an optional fbAdsetIds list so the portal can pin the call
+  // to exactly the assigned ad sets when that information is available.
+  async getAdSetTimeSeries(actId: string, token: string, datePreset = "last_30d", fbAdsetIds?: string[]) {
     const params: Record<string, string> = {
       level: "adset",
       time_increment: "1",
@@ -239,8 +277,37 @@ export const fb = {
       limit: "500",
       ...INSIGHTS_ATTRIBUTION_PARAMS,
     };
+    const filters: any[] = [
+      { field: "adset.effective_status", operator: "IN", value: ADSET_INSIGHTS_STATUSES },
+    ];
+    if (fbAdsetIds && fbAdsetIds.length > 0) {
+      filters.push({ field: "adset.id", operator: "IN", value: fbAdsetIds });
+    }
+    params.filtering = JSON.stringify(filters);
+
     if (datePreset === "last_30d") params.time_range = recentRangeThroughToday(30);
     else params.date_preset = datePreset;
+    return fbFetchAll(`/${actId}/insights`, params, token);
+  },
+  // NEW — direct per-adset MAXIMUM-range insights pull. Used as a last-resort
+  // re-fetch from the portal when the daily snapshots + ad_sets row are both
+  // empty for an assigned ad set. Mirrors what Ads Manager shows in the
+  // adset's "Maximum" column.
+  async getAdSetInsightsMaximum(actId: string, token: string, fbAdsetIds?: string[]) {
+    const params: Record<string, string> = {
+      level: "adset",
+      date_preset: "maximum",
+      fields: "campaign_id,adset_id,adset_name,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,actions,optimization_goal,date_start,date_stop",
+      limit: "500",
+      ...INSIGHTS_ATTRIBUTION_PARAMS,
+    };
+    const filters: any[] = [
+      { field: "adset.effective_status", operator: "IN", value: ADSET_INSIGHTS_STATUSES },
+    ];
+    if (fbAdsetIds && fbAdsetIds.length > 0) {
+      filters.push({ field: "adset.id", operator: "IN", value: fbAdsetIds });
+    }
+    params.filtering = JSON.stringify(filters);
     return fbFetchAll(`/${actId}/insights`, params, token);
   },
 };

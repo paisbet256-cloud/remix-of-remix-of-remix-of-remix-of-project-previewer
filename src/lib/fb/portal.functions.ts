@@ -199,11 +199,9 @@ export const getClientPortalData = createServerFn({ method: "POST" })
       }
     }
 
-    // ============ AD SET aggregated metrics (NEW) ============
-    // We aggregate per-adset daily snapshots from insights_snapshots so the
-    // Ad Set Performance table uses the SAME source as the top KPIs. This
-    // guarantees no row renders as zero just because Meta's "maximum" preset
-    // skipped a brand-new ad set on day 1.
+    // ============ AD SET aggregated metrics ============
+    // Step 1: aggregate per-adset daily snapshots from insights_snapshots so the
+    // Ad Set Performance table uses the SAME source as the top KPIs.
     if (accountIds.length && adSets.length > 0) {
       const sinceStr = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
       const allFbIds = adSets.map((s: any) => s.fb_adset_id).filter(Boolean);
@@ -228,11 +226,6 @@ export const getClientPortalData = createServerFn({ method: "POST" })
           agg.set(id, cur);
         }
 
-        // Merge aggregated numbers into each ad set row. We OVERWRITE the
-        // ad_sets columns when the aggregate is non-zero — that matches Ads
-        // Manager because snapshots come from Meta's own daily insights
-        // endpoint. If aggregate is zero (no snapshots yet) we keep whatever
-        // is in ad_sets so we never DOWNGRADE real numbers.
         for (const s of adSets as any[]) {
           const v = agg.get(s.fb_adset_id);
           if (!v) continue;
@@ -248,10 +241,119 @@ export const getClientPortalData = createServerFn({ method: "POST" })
           s.cpm         = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
           s.frequency   = v.reach > 0 ? v.impressions / v.reach : 0;
         }
-        // Re-sort by spend so highest-spend ad sets appear first.
-        adSets.sort((a: any, b: any) => (Number(b.spend) || 0) - (Number(a.spend) || 0));
       }
     }
+
+    // Step 2: LIVE re-pull from Meta for any ad set that is STILL empty after
+    // Step 1. This catches brand-new / paused / zero-delivery ad sets that
+    // never made it into our snapshot table because of rate limits or because
+    // Meta's default insights response omits zero-delivery rows. We hit the
+    // Graph API with date_preset=maximum + explicit effective_status filter
+    // and an `adset.id IN [...]` filter so the response always includes a row.
+    const emptyAdSets = (adSets as any[]).filter((s) => {
+      const noMetrics =
+        !(Number(s.spend) > 0) &&
+        !(Number(s.impressions) > 0) &&
+        !(Number(s.clicks) > 0) &&
+        !(Number(s.results) > 0) &&
+        !(Number(s.reach) > 0);
+      return noMetrics && s.fb_adset_id;
+    });
+    if (emptyAdSets.length > 0 && accounts.length > 0) {
+      try {
+        const { fb, extractPrimaryResults } = await import("./api.server");
+        const { data: settings } = await supabaseAdmin
+          .from("app_settings")
+          .select("fb_system_user_token")
+          .eq("id", 1)
+          .maybeSingle();
+
+        const adSetGoalByFbId = new Map<string, string | null>();
+        for (const s of adSets as any[]) adSetGoalByFbId.set(s.fb_adset_id, s.optimization_goal ?? null);
+
+        // Group empties by account so we make one API call per account.
+        const byAccount = new Map<string, string[]>();
+        for (const s of emptyAdSets) {
+          const arr = byAccount.get(s.ad_account_id) ?? [];
+          arr.push(s.fb_adset_id);
+          byAccount.set(s.ad_account_id, arr);
+        }
+
+        for (const account of accounts) {
+          const fbIds = byAccount.get(account.id);
+          if (!fbIds || fbIds.length === 0) continue;
+          const token = await getTokenForPortalAccount(supabaseAdmin, account, settings?.fb_system_user_token);
+          if (!token) continue;
+          try {
+            const rows = await fb.getAdSetInsightsMaximum(account.fb_account_id, token, fbIds);
+            for (const row of rows as any[]) {
+              const target = (adSets as any[]).find((s) => s.fb_adset_id === row.adset_id);
+              if (!target) continue;
+              const spend = Number(row.spend) || 0;
+              const impressions = Number(row.impressions) || 0;
+              const clicks = Number(row.clicks) || 0;
+              const reach = Number(row.reach) || 0;
+              const results = extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id));
+              target.spend = spend;
+              target.impressions = impressions;
+              target.clicks = clicks;
+              target.reach = reach;
+              target.results = results;
+              target.ctr = Number(row.ctr) || (impressions > 0 ? (clicks / impressions) * 100 : 0);
+              target.cpc = Number(row.cpc) || (clicks > 0 ? spend / clicks : 0);
+              target.cpm = Number(row.cpm) || (impressions > 0 ? (spend / impressions) * 1000 : 0);
+              target.frequency = Number(row.frequency) || (reach > 0 ? impressions / reach : 0);
+            }
+          } catch (e) {
+            console.warn("[portal] live ad-set re-pull failed for account", account.id, e);
+          }
+        }
+      } catch (e) {
+        console.warn("[portal] live ad-set re-pull skipped", e);
+      }
+    }
+
+    // Step 3: SAFETY NET — for any campaign that has exactly ONE visible ad
+    // set and that ad set is still empty while the campaign rollup has data,
+    // copy the campaign metrics onto that ad set. Mathematically this is the
+    // exact truth (one ad set ⇒ all campaign spend is that ad set's spend),
+    // and it guarantees the Ad Set Performance table can never silently
+    // render zeros while the top KPIs show real numbers again.
+    if (campaigns.length > 0 && adSets.length > 0) {
+      const adSetsByCampaign = new Map<string, any[]>();
+      for (const s of adSets as any[]) {
+        const arr = adSetsByCampaign.get(s.campaign_id) ?? [];
+        arr.push(s);
+        adSetsByCampaign.set(s.campaign_id, arr);
+      }
+      for (const c of campaigns as any[]) {
+        const sets = adSetsByCampaign.get(c.id) ?? [];
+        if (sets.length !== 1) continue;
+        const s = sets[0];
+        const setHasData =
+          Number(s.spend) > 0 || Number(s.impressions) > 0 ||
+          Number(s.clicks) > 0 || Number(s.results) > 0 ||
+          Number(s.reach) > 0;
+        const campHasData =
+          Number(c.spend) > 0 || Number(c.impressions) > 0 ||
+          Number(c.clicks) > 0 || Number(c.results) > 0 ||
+          Number(c.reach) > 0;
+        if (setHasData || !campHasData) continue;
+
+        s.spend       = Number(c.spend) || 0;
+        s.impressions = Number(c.impressions) || 0;
+        s.clicks      = Number(c.clicks) || 0;
+        s.reach       = Number(c.reach) || 0;
+        s.results     = Number(c.results) || 0;
+        s.ctr         = Number(c.ctr) || (s.impressions > 0 ? (s.clicks / s.impressions) * 100 : 0);
+        s.cpc         = Number(c.cpc) || (s.clicks > 0 ? s.spend / s.clicks : 0);
+        s.cpm         = Number(c.cpm) || (s.impressions > 0 ? (s.spend / s.impressions) * 1000 : 0);
+        s.frequency   = Number(c.frequency) || (s.reach > 0 ? s.impressions / s.reach : 0);
+      }
+    }
+
+    // Final sort — highest spend first.
+    (adSets as any[]).sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0));
 
     const { data: alerts } = await supabaseAdmin
       .from("alerts")
