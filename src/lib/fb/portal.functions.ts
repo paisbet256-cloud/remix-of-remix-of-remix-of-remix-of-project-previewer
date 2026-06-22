@@ -60,88 +60,116 @@ export const getClientPortalData = createServerFn({ method: "POST" })
     if ("forbidden" in r) return { forbidden: true as const };
     const { client, supabaseAdmin } = r;
 
-    const { data: assigned } = await supabaseAdmin
-      .from("client_campaigns")
-      .select("campaign_id")
+    // ============ PER-AD SCOPING ============
+    // Single source of truth: client_ads. Everything the client sees is
+    // derived from this list — ad sets and campaigns are rollups of the
+    // assigned ads, ad accounts are derived from the assigned ads' parents.
+    // If the admin has not assigned any ads, the portal renders empty.
+    const { data: assignedRows } = await (supabaseAdmin as any)
+      .from("client_ads")
+      .select("ad_id")
       .eq("client_id", client.id);
-    const assignedCampaignIds = (assigned ?? []).map((r) => r.campaign_id);
+    const assignedAdIds: string[] = ((assignedRows ?? []) as any[]).map((r) => r.ad_id);
 
     let accounts: any[] = [];
     let campaigns: any[] = [];
     let adSets: any[] = [];
     let ads: any[] = [];
-    // fb_campaign_id list for scoping live time-series to assigned campaigns
     let assignedFbCampaignIds: string[] = [];
 
-    if (assignedCampaignIds.length) {
-      const { data: assignedCampaigns } = await supabaseAdmin
-        .from("campaigns")
-        .select("id,fb_campaign_id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
-        .in("id", assignedCampaignIds)
-        .order("spend", { ascending: false })
-        .limit(50);
-      campaigns = assignedCampaigns ?? [];
-      assignedFbCampaignIds = campaigns.map((c: any) => c.fb_campaign_id).filter(Boolean);
-
-      const { data: assignedAdSets } = await supabaseAdmin
-        .from("ad_sets")
-        .select("id,fb_adset_id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
-        .in("campaign_id", assignedCampaignIds)
-        .order("spend", { ascending: false })
-        .limit(200);
-      adSets = assignedAdSets ?? [];
-
-      const { data: assignedAds } = await supabaseAdmin
+    if (assignedAdIds.length > 0) {
+      const { data: adRows } = await supabaseAdmin
         .from("ads")
         .select("id,ad_account_id,campaign_id,ad_set_id,name,fb_ad_id,effective_status,creative_thumbnail,preview_link,spend,reach,impressions,clicks,ctr,results")
-        .in("campaign_id", assignedCampaignIds)
-        .order("spend", { ascending: false })
-        .limit(200);
-      ads = assignedAds ?? [];
+        .in("id", assignedAdIds)
+        .order("spend", { ascending: false });
+      ads = adRows ?? [];
 
-      const campaignAccountIds = Array.from(new Set(campaigns.map((c) => c.ad_account_id).filter(Boolean)));
-      if (campaignAccountIds.length) {
-        const { data: scopedAccounts } = await supabaseAdmin
-          .from("ad_accounts")
-          .select("id,connection_id,fb_account_id,account_name,currency,timezone_name,business_name,total_spend,total_reach,total_impressions,total_clicks,total_results,active_campaigns,last_sync_at,last_sync_status,account_status")
-          .in("id", campaignAccountIds)
-          .eq("is_active", true);
-        accounts = scopedAccounts ?? [];
+      const adSetIds = Array.from(new Set(ads.map((a) => a.ad_set_id).filter(Boolean)));
+      const campaignIds = Array.from(new Set(ads.map((a) => a.campaign_id).filter(Boolean)));
+      const accountIdsLocal = Array.from(new Set(ads.map((a) => a.ad_account_id).filter(Boolean)));
+
+      const [{ data: adSetRows }, { data: campaignRows }, { data: accountRows }] = await Promise.all([
+        adSetIds.length
+          ? supabaseAdmin
+              .from("ad_sets")
+              .select("id,fb_adset_id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,frequency")
+              .in("id", adSetIds)
+          : Promise.resolve({ data: [] as any[] }),
+        campaignIds.length
+          ? supabaseAdmin
+              .from("campaigns")
+              .select("id,fb_campaign_id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,frequency")
+              .in("id", campaignIds)
+          : Promise.resolve({ data: [] as any[] }),
+        accountIdsLocal.length
+          ? supabaseAdmin
+              .from("ad_accounts")
+              .select("id,connection_id,fb_account_id,account_name,currency,timezone_name,business_name,total_spend,total_reach,total_impressions,total_clicks,total_results,active_campaigns,last_sync_at,last_sync_status,account_status")
+              .in("id", accountIdsLocal)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      const adSetBase = (adSetRows ?? []) as any[];
+      const campaignBase = (campaignRows ?? []) as any[];
+      accounts = (accountRows ?? []) as any[];
+
+      // ----- Roll up ad-set metrics from assigned ads only -----
+      const adsByAdSet = new Map<string, any[]>();
+      for (const a of ads) {
+        const arr = adsByAdSet.get(a.ad_set_id) ?? [];
+        arr.push(a);
+        adsByAdSet.set(a.ad_set_id, arr);
       }
-    } else {
-      const { data: clientAccounts } = await supabaseAdmin
-        .from("ad_accounts")
-        .select("id,connection_id,fb_account_id,account_name,currency,timezone_name,business_name,total_spend,total_reach,total_impressions,total_clicks,total_results,active_campaigns,last_sync_at,last_sync_status,account_status")
-        .eq("client_id", client.id)
-        .eq("is_active", true);
-      accounts = clientAccounts ?? [];
-      const accountIds = accounts.map((a) => a.id);
-      if (accountIds.length) {
-        const [{ data: accountCampaigns }, { data: accountAdSets }, { data: accountAds }] = await Promise.all([
-          supabaseAdmin.from("campaigns")
-            .select("id,fb_campaign_id,ad_account_id,name,objective,effective_status,daily_budget,lifetime_budget,spend,reach,impressions,clicks,ctr,cpc,cpm,frequency,results")
-            .in("ad_account_id", accountIds).order("spend", { ascending: false }).limit(50),
-          supabaseAdmin.from("ad_sets")
-            .select("id,fb_adset_id,campaign_id,ad_account_id,name,effective_status,daily_budget,lifetime_budget,optimization_goal,start_time,end_time,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
-            .in("ad_account_id", accountIds).order("spend", { ascending: false }).limit(200),
-          supabaseAdmin.from("ads")
-            .select("id,ad_account_id,campaign_id,ad_set_id,name,fb_ad_id,effective_status,creative_thumbnail,preview_link,spend,reach,impressions,clicks,ctr,results")
-            .in("ad_account_id", accountIds).order("spend", { ascending: false }).limit(200),
-        ]);
-        campaigns = accountCampaigns ?? [];
-        adSets = accountAdSets ?? [];
-        ads = accountAds ?? [];
+      adSets = adSetBase.map((s) => {
+        const children = adsByAdSet.get(s.id) ?? [];
+        const spend = children.reduce((x, a) => x + (Number(a.spend) || 0), 0);
+        const impressions = children.reduce((x, a) => x + (Number(a.impressions) || 0), 0);
+        const clicks = children.reduce((x, a) => x + (Number(a.clicks) || 0), 0);
+        const results = children.reduce((x, a) => x + (Number(a.results) || 0), 0);
+        const reach = children.reduce((x, a) => Math.max(x, Number(a.reach) || 0), 0);
+        return {
+          ...s,
+          spend, impressions, clicks, results, reach,
+          ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+          cpc: clicks > 0 ? spend / clicks : 0,
+          cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
+          frequency: reach > 0 ? impressions / reach : 0,
+        };
+      });
+
+      // ----- Roll up campaign metrics from assigned ads only -----
+      const adsByCampaign = new Map<string, any[]>();
+      for (const a of ads) {
+        const arr = adsByCampaign.get(a.campaign_id) ?? [];
+        arr.push(a);
+        adsByCampaign.set(a.campaign_id, arr);
       }
+      campaigns = campaignBase.map((c) => {
+        const children = adsByCampaign.get(c.id) ?? [];
+        const spend = children.reduce((x, a) => x + (Number(a.spend) || 0), 0);
+        const impressions = children.reduce((x, a) => x + (Number(a.impressions) || 0), 0);
+        const clicks = children.reduce((x, a) => x + (Number(a.clicks) || 0), 0);
+        const results = children.reduce((x, a) => x + (Number(a.results) || 0), 0);
+        const reach = children.reduce((x, a) => Math.max(x, Number(a.reach) || 0), 0);
+        return {
+          ...c,
+          spend, impressions, clicks, results, reach,
+          ctr: impressions > 0 ? (clicks / impressions) * 100 : 0,
+          cpc: clicks > 0 ? spend / clicks : 0,
+          cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
+          frequency: reach > 0 ? impressions / reach : 0,
+        };
+      });
+
+      assignedFbCampaignIds = campaigns.map((c: any) => c.fb_campaign_id).filter(Boolean);
     }
 
     const accountIds = accounts.map((a) => a.id);
 
-    // Time series — scoping rules:
-    //   * Client has assigned campaigns → live per-campaign time series filtered
-    //     to ONLY their campaigns (matches Ads Manager numbers exactly).
-    //   * No assignments → account-level time series (whole ad account).
+    // ============ Time series — only when client has assigned ads ============
     let liveTimeSeries: any[] | null = null;
-    if (accounts.length > 0) {
+    if (assignedAdIds.length > 0 && assignedFbCampaignIds.length > 0 && accounts.length > 0) {
       try {
         const { fb } = await import("./api.server");
         const { data: settings } = await supabaseAdmin
@@ -153,19 +181,13 @@ export const getClientPortalData = createServerFn({ method: "POST" })
         for (const account of accounts) {
           const token = await getTokenForPortalAccount(supabaseAdmin, account, settings?.fb_system_user_token);
           if (!token) continue;
-          if (assignedFbCampaignIds.length > 0) {
-            // Only campaigns belonging to THIS account
-            const acctCampaignFbIds = campaigns
-              .filter((c: any) => c.ad_account_id === account.id)
-              .map((c: any) => c.fb_campaign_id)
-              .filter(Boolean);
-            if (acctCampaignFbIds.length === 0) continue;
-            const rows = await fb.getCampaignTimeSeries(account.fb_account_id, token, acctCampaignFbIds, "last_30d");
-            liveRows.push(...rows.map((row: any) => ({ ...row, ad_account_id: account.id })));
-          } else {
-            const rows = await fb.getTimeSeries(account.fb_account_id, token, "last_30d");
-            liveRows.push(...rows.map((row: any) => ({ ...row, ad_account_id: account.id })));
-          }
+          const acctCampaignFbIds = campaigns
+            .filter((c: any) => c.ad_account_id === account.id)
+            .map((c: any) => c.fb_campaign_id)
+            .filter(Boolean);
+          if (acctCampaignFbIds.length === 0) continue;
+          const rows = await fb.getCampaignTimeSeries(account.fb_account_id, token, acctCampaignFbIds, "last_30d");
+          liveRows.push(...rows.map((row: any) => ({ ...row, ad_account_id: account.id })));
         }
         liveTimeSeries = liveRows;
       } catch (e) {
@@ -173,187 +195,26 @@ export const getClientPortalData = createServerFn({ method: "POST" })
       }
     }
 
-    // DB fallback time series — also scoped to assigned campaigns when applicable.
+    // DB fallback time series — campaign-level snapshots scoped to the
+    // assigned campaigns. Reasonable approximation when live call fails.
     let dbTimeSeries: any[] = [];
-    if (accountIds.length) {
+    if (accountIds.length && assignedFbCampaignIds.length > 0) {
       const sinceStr = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-      if (assignedFbCampaignIds.length > 0) {
-        const { data: ts } = await supabaseAdmin
-          .from("insights_snapshots")
-          .select("ad_account_id,date_start,spend,reach,impressions,clicks,results,entity_id")
-          .in("ad_account_id", accountIds)
-          .eq("level", "campaign")
-          .in("entity_id", assignedFbCampaignIds)
-          .gte("date_start", sinceStr)
-          .order("date_start", { ascending: true });
-        dbTimeSeries = ts ?? [];
-      } else {
-        const { data: ts } = await supabaseAdmin
-          .from("insights_snapshots")
-          .select("ad_account_id,date_start,spend,reach,impressions,clicks,results")
-          .in("ad_account_id", accountIds)
-          .eq("level", "account")
-          .gte("date_start", sinceStr)
-          .order("date_start", { ascending: true });
-        dbTimeSeries = ts ?? [];
-      }
+      const { data: ts } = await supabaseAdmin
+        .from("insights_snapshots")
+        .select("ad_account_id,date_start,spend,reach,impressions,clicks,results,entity_id")
+        .in("ad_account_id", accountIds)
+        .eq("level", "campaign")
+        .in("entity_id", assignedFbCampaignIds)
+        .gte("date_start", sinceStr)
+        .order("date_start", { ascending: true });
+      dbTimeSeries = ts ?? [];
     }
 
-    // ============ AD SET aggregated metrics ============
-    // Step 1: aggregate per-adset daily snapshots from insights_snapshots so the
-    // Ad Set Performance table uses the SAME source as the top KPIs.
-    if (accountIds.length && adSets.length > 0) {
-      const sinceStr = new Date(Date.now() - 29 * 86400000).toISOString().slice(0, 10);
-      const allFbIds = adSets.map((s: any) => s.fb_adset_id).filter(Boolean);
-      if (allFbIds.length > 0) {
-        const { data: snaps } = await supabaseAdmin
-          .from("insights_snapshots")
-          .select("entity_id,spend,reach,impressions,clicks,results")
-          .in("ad_account_id", accountIds)
-          .eq("level", "adset")
-          .in("entity_id", allFbIds)
-          .gte("date_start", sinceStr);
-
-        const agg = new Map<string, { spend: number; reach: number; impressions: number; clicks: number; results: number }>();
-        for (const r of snaps ?? []) {
-          const id = (r as any).entity_id;
-          const cur = agg.get(id) ?? { spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0 };
-          cur.spend       += Number((r as any).spend) || 0;
-          cur.impressions += Number((r as any).impressions) || 0;
-          cur.clicks      += Number((r as any).clicks) || 0;
-          cur.results     += Number((r as any).results) || 0;
-          cur.reach = Math.max(cur.reach, Number((r as any).reach) || 0);
-          agg.set(id, cur);
-        }
-
-        for (const s of adSets as any[]) {
-          const v = agg.get(s.fb_adset_id);
-          if (!v) continue;
-          const hasData = v.spend > 0 || v.impressions > 0 || v.clicks > 0 || v.results > 0 || v.reach > 0;
-          if (!hasData) continue;
-          s.spend       = v.spend;
-          s.impressions = v.impressions;
-          s.clicks      = v.clicks;
-          s.reach       = v.reach;
-          s.results     = v.results;
-          s.ctr         = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
-          s.cpc         = v.clicks > 0 ? v.spend / v.clicks : 0;
-          s.cpm         = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
-          s.frequency   = v.reach > 0 ? v.impressions / v.reach : 0;
-        }
-      }
-    }
-
-    // Step 2: LIVE re-pull from Meta for any ad set that is STILL empty after
-    // Step 1. This catches brand-new / paused / zero-delivery ad sets that
-    // never made it into our snapshot table because of rate limits or because
-    // Meta's default insights response omits zero-delivery rows. We hit the
-    // Graph API with date_preset=maximum + explicit effective_status filter
-    // and an `adset.id IN [...]` filter so the response always includes a row.
-    const emptyAdSets = (adSets as any[]).filter((s) => {
-      const noMetrics =
-        !(Number(s.spend) > 0) &&
-        !(Number(s.impressions) > 0) &&
-        !(Number(s.clicks) > 0) &&
-        !(Number(s.results) > 0) &&
-        !(Number(s.reach) > 0);
-      return noMetrics && s.fb_adset_id;
-    });
-    if (emptyAdSets.length > 0 && accounts.length > 0) {
-      try {
-        const { fb, extractPrimaryResults } = await import("./api.server");
-        const { data: settings } = await supabaseAdmin
-          .from("app_settings")
-          .select("fb_system_user_token")
-          .eq("id", 1)
-          .maybeSingle();
-
-        const adSetGoalByFbId = new Map<string, string | null>();
-        for (const s of adSets as any[]) adSetGoalByFbId.set(s.fb_adset_id, s.optimization_goal ?? null);
-
-        // Group empties by account so we make one API call per account.
-        const byAccount = new Map<string, string[]>();
-        for (const s of emptyAdSets) {
-          const arr = byAccount.get(s.ad_account_id) ?? [];
-          arr.push(s.fb_adset_id);
-          byAccount.set(s.ad_account_id, arr);
-        }
-
-        for (const account of accounts) {
-          const fbIds = byAccount.get(account.id);
-          if (!fbIds || fbIds.length === 0) continue;
-          const token = await getTokenForPortalAccount(supabaseAdmin, account, settings?.fb_system_user_token);
-          if (!token) continue;
-          try {
-            const rows = await fb.getAdSetInsightsMaximum(account.fb_account_id, token, fbIds);
-            for (const row of rows as any[]) {
-              const target = (adSets as any[]).find((s) => s.fb_adset_id === row.adset_id);
-              if (!target) continue;
-              const spend = Number(row.spend) || 0;
-              const impressions = Number(row.impressions) || 0;
-              const clicks = Number(row.clicks) || 0;
-              const reach = Number(row.reach) || 0;
-              const results = extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id));
-              target.spend = spend;
-              target.impressions = impressions;
-              target.clicks = clicks;
-              target.reach = reach;
-              target.results = results;
-              target.ctr = Number(row.ctr) || (impressions > 0 ? (clicks / impressions) * 100 : 0);
-              target.cpc = Number(row.cpc) || (clicks > 0 ? spend / clicks : 0);
-              target.cpm = Number(row.cpm) || (impressions > 0 ? (spend / impressions) * 1000 : 0);
-              target.frequency = Number(row.frequency) || (reach > 0 ? impressions / reach : 0);
-            }
-          } catch (e) {
-            console.warn("[portal] live ad-set re-pull failed for account", account.id, e);
-          }
-        }
-      } catch (e) {
-        console.warn("[portal] live ad-set re-pull skipped", e);
-      }
-    }
-
-    // Step 3: SAFETY NET — for any campaign that has exactly ONE visible ad
-    // set and that ad set is still empty while the campaign rollup has data,
-    // copy the campaign metrics onto that ad set. Mathematically this is the
-    // exact truth (one ad set ⇒ all campaign spend is that ad set's spend),
-    // and it guarantees the Ad Set Performance table can never silently
-    // render zeros while the top KPIs show real numbers again.
-    if (campaigns.length > 0 && adSets.length > 0) {
-      const adSetsByCampaign = new Map<string, any[]>();
-      for (const s of adSets as any[]) {
-        const arr = adSetsByCampaign.get(s.campaign_id) ?? [];
-        arr.push(s);
-        adSetsByCampaign.set(s.campaign_id, arr);
-      }
-      for (const c of campaigns as any[]) {
-        const sets = adSetsByCampaign.get(c.id) ?? [];
-        if (sets.length !== 1) continue;
-        const s = sets[0];
-        const setHasData =
-          Number(s.spend) > 0 || Number(s.impressions) > 0 ||
-          Number(s.clicks) > 0 || Number(s.results) > 0 ||
-          Number(s.reach) > 0;
-        const campHasData =
-          Number(c.spend) > 0 || Number(c.impressions) > 0 ||
-          Number(c.clicks) > 0 || Number(c.results) > 0 ||
-          Number(c.reach) > 0;
-        if (setHasData || !campHasData) continue;
-
-        s.spend       = Number(c.spend) || 0;
-        s.impressions = Number(c.impressions) || 0;
-        s.clicks      = Number(c.clicks) || 0;
-        s.reach       = Number(c.reach) || 0;
-        s.results     = Number(c.results) || 0;
-        s.ctr         = Number(c.ctr) || (s.impressions > 0 ? (s.clicks / s.impressions) * 100 : 0);
-        s.cpc         = Number(c.cpc) || (s.clicks > 0 ? s.spend / s.clicks : 0);
-        s.cpm         = Number(c.cpm) || (s.impressions > 0 ? (s.spend / s.impressions) * 1000 : 0);
-        s.frequency   = Number(c.frequency) || (s.reach > 0 ? s.impressions / s.reach : 0);
-      }
-    }
-
-    // Final sort — highest spend first.
+    // Sort outputs — highest spend first.
     (adSets as any[]).sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0));
+    (campaigns as any[]).sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0));
+
 
     const { data: alerts } = await supabaseAdmin
       .from("alerts")
@@ -373,7 +234,7 @@ export const getClientPortalData = createServerFn({ method: "POST" })
       campaigns,
       adSets,
       ads,
-      assignedCampaignIds,
+      assignedAdIds,
       timeSeries: (liveTimeSeries && liveTimeSeries.length > 0) ? liveTimeSeries : dbTimeSeries,
       alerts: alerts ?? [],
     };
@@ -393,49 +254,78 @@ export const getClientInsightsForExport = createServerFn({ method: "POST" })
     if ("forbidden" in r) return { forbidden: true as const };
     const { client, supabaseAdmin } = r;
 
-    // Scope the export to assigned campaigns when present (same as portal view).
-    const { data: assigned } = await supabaseAdmin
-      .from("client_campaigns").select("campaign_id").eq("client_id", client.id);
-    const assignedIds = (assigned ?? []).map((a) => a.campaign_id);
+    // Scope export to the client's assigned ads only.
+    const { data: assigned } = await (supabaseAdmin as any)
+      .from("client_ads").select("ad_id").eq("client_id", client.id);
+    const adIds: string[] = ((assigned ?? []) as any[]).map((a) => a.ad_id);
+    if (adIds.length === 0) return { forbidden: false as const, rows: [] as any[] };
 
-    const { data: accounts } = await supabaseAdmin
-      .from("ad_accounts").select("id,fb_account_id,account_name,currency").eq("client_id", client.id).eq("is_active", true);
-    const ids = (accounts ?? []).map((a) => a.id);
-    if (!ids.length && !assignedIds.length) return { forbidden: false as const, rows: [] as any[] };
-    const acctById = new Map((accounts ?? []).map((a) => [a.id, a]));
+    // Load the assigned ads with their parents in a single nested select.
+    const { data: ads } = await supabaseAdmin
+      .from("ads")
+      .select("id,ad_account_id,campaign_id,ad_set_id,name,fb_ad_id,effective_status,spend,reach,impressions,clicks,ctr,results,campaign:campaigns(id,name),ad_set:ad_sets(id,name),ad_account:ad_accounts(id,fb_account_id,account_name,currency)")
+      .in("id", adIds);
 
-    const table = data.level === "campaign" ? "campaigns" : data.level === "adset" ? "ad_sets" : "ads";
+    const adsList = (ads ?? []) as any[];
 
-    let query = supabaseAdmin.from(table)
-      .select("ad_account_id,campaign_id,name,effective_status,spend,reach,impressions,clicks,ctr,cpc,cpm,results,frequency")
-      .order("spend", { ascending: false });
-
-    if (assignedIds.length) {
-      if (data.level === "campaign") {
-        query = query.in("id", assignedIds);
-      } else {
-        query = query.in("campaign_id", assignedIds);
+    let rows: any[] = [];
+    if (data.level === "ad") {
+      rows = adsList.map((a) => ({
+        ad_account_id: a.ad_account_id,
+        campaign_id: a.campaign_id,
+        name: a.name,
+        effective_status: a.effective_status,
+        spend: a.spend, reach: a.reach, impressions: a.impressions,
+        clicks: a.clicks, ctr: a.ctr, cpc: a.clicks > 0 ? Number(a.spend) / Number(a.clicks) : 0,
+        cpm: a.impressions > 0 ? (Number(a.spend) / Number(a.impressions)) * 1000 : 0,
+        results: a.results, frequency: a.reach > 0 ? Number(a.impressions) / Number(a.reach) : 0,
+        _acct: a.ad_account,
+      }));
+    } else {
+      // Group by ad_set or campaign and aggregate.
+      const groupBy = data.level === "adset" ? "ad_set" : "campaign";
+      const groups = new Map<string, any>();
+      for (const a of adsList) {
+        const parent = a[groupBy];
+        if (!parent?.id) continue;
+        const cur = groups.get(parent.id) ?? {
+          ad_account_id: a.ad_account_id,
+          campaign_id: a.campaign_id,
+          name: parent.name,
+          effective_status: a.effective_status,
+          spend: 0, reach: 0, impressions: 0, clicks: 0, results: 0,
+          _acct: a.ad_account,
+        };
+        cur.spend += Number(a.spend) || 0;
+        cur.impressions += Number(a.impressions) || 0;
+        cur.clicks += Number(a.clicks) || 0;
+        cur.results += Number(a.results) || 0;
+        cur.reach = Math.max(cur.reach, Number(a.reach) || 0);
+        groups.set(parent.id, cur);
       }
-    } else if (ids.length) {
-      query = query.in("ad_account_id", ids);
+      rows = Array.from(groups.values()).map((g) => ({
+        ...g,
+        ctr: g.impressions > 0 ? (g.clicks / g.impressions) * 100 : 0,
+        cpc: g.clicks > 0 ? g.spend / g.clicks : 0,
+        cpm: g.impressions > 0 ? (g.spend / g.impressions) * 1000 : 0,
+        frequency: g.reach > 0 ? g.impressions / g.reach : 0,
+      }));
     }
 
-    const { data: rows } = await query;
-
-    const enriched = (rows ?? []).map((r: any) => {
-      const acct: any = acctById.get(r.ad_account_id);
-      return {
+    const enriched = rows
+      .sort((a, b) => (Number(b.spend) || 0) - (Number(a.spend) || 0))
+      .map((r: any) => ({
         client: client.name,
-        ad_account: acct?.account_name ?? acct?.fb_account_id ?? "",
-        currency: acct?.currency ?? "",
+        ad_account: r._acct?.account_name ?? r._acct?.fb_account_id ?? "",
+        currency: r._acct?.currency ?? "",
         name: r.name,
         status: r.effective_status,
         spend: r.spend, reach: r.reach, impressions: r.impressions, clicks: r.clicks,
         ctr: r.ctr, cpc: r.cpc, cpm: r.cpm, results: r.results, frequency: r.frequency,
-      };
-    });
+      }));
     return { forbidden: false as const, rows: enriched };
   });
+
 
 // Trigger a fresh Meta sync for all ad accounts attached to a client/portal slug.
 export const triggerClientSync = createServerFn({ method: "POST" })
@@ -452,15 +342,16 @@ export const triggerClientSync = createServerFn({ method: "POST" })
     if ("forbidden" in r) return { ok: false as const, reason: "forbidden" as const };
     const { client, supabaseAdmin } = r;
 
-    const { data: assigned } = await supabaseAdmin
-      .from("client_campaigns").select("campaign_id").eq("client_id", client.id);
-    const assignedIds = (assigned ?? []).map((a) => a.campaign_id);
+    // Sync ad accounts derived from the client's assigned ads.
+    const { data: assigned } = await (supabaseAdmin as any)
+      .from("client_ads").select("ad_id").eq("client_id", client.id);
+    const adIds: string[] = ((assigned ?? []) as any[]).map((a) => a.ad_id);
 
     let accountIds: string[] = [];
-    if (assignedIds.length) {
-      const { data: cs } = await supabaseAdmin
-        .from("campaigns").select("ad_account_id").in("id", assignedIds);
-      accountIds = Array.from(new Set((cs ?? []).map((c) => c.ad_account_id).filter(Boolean)));
+    if (adIds.length) {
+      const { data: ads } = await supabaseAdmin
+        .from("ads").select("ad_account_id").in("id", adIds);
+      accountIds = Array.from(new Set(((ads ?? []) as any[]).map((a) => a.ad_account_id).filter(Boolean)));
     } else {
       const { data: as } = await supabaseAdmin
         .from("ad_accounts").select("id").eq("client_id", client.id).eq("is_active", true);

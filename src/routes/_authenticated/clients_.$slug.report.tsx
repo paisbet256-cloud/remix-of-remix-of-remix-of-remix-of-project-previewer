@@ -39,37 +39,33 @@ function ClientReportPage() {
         .select("*")
         .eq("client_id", client.id);
       if (accountsError) throw accountsError;
-      const acctIds = (accounts ?? []).map((a: any) => a.id);
 
-      const { data: assigned, error: assignedError } = await supabase
-        .from("client_campaigns")
-        .select("campaign_id")
+      // Per-ad assignment is the single source of truth for the report page.
+      const { data: assigned, error: assignedError } = await (supabase as any)
+        .from("client_ads")
+        .select("ad_id")
         .eq("client_id", client.id);
       if (assignedError) throw assignedError;
-      const assignedIds = (assigned ?? []).map((r: any) => r.campaign_id);
+      const assignedAdIds = ((assigned ?? []) as any[]).map((r) => r.ad_id);
 
-      let campaigns: any[] = [];
-      if (assignedIds.length) {
-        const { data, error } = await supabase.from("campaigns").select("*").in("id", assignedIds);
-        if (error) throw error;
-        campaigns = data ?? [];
-      } else if (acctIds.length) {
-        const { data, error } = await supabase.from("campaigns").select("*").in("ad_account_id", acctIds);
-        if (error) throw error;
-        campaigns = data ?? [];
-      }
-
-      const campIds = campaigns.map((c) => c.id);
       let ads: any[] = [];
-      if (campIds.length) {
-        const { data, error } = await supabase
+      let campaigns: any[] = [];
+      if (assignedAdIds.length) {
+        const { data: adRows, error: adsError } = await supabase
           .from("ads")
-          .select("id,name,fb_ad_id,effective_status,campaign_id,ad_account_id,spend,impressions,reach,clicks,results")
-          .in("campaign_id", campIds)
-          .order("spend", { ascending: false })
-          .limit(200);
-        if (error) throw error;
-        ads = data ?? [];
+          .select("id,name,fb_ad_id,effective_status,campaign_id,ad_account_id,ad_set_id,spend,impressions,reach,clicks,results")
+          .in("id", assignedAdIds)
+          .order("spend", { ascending: false });
+        if (adsError) throw adsError;
+        ads = adRows ?? [];
+        const campaignIds = Array.from(new Set(ads.map((a) => a.campaign_id).filter(Boolean)));
+        if (campaignIds.length) {
+          const { data: campRows } = await supabase
+            .from("campaigns")
+            .select("id,name")
+            .in("id", campaignIds);
+          campaigns = campRows ?? [];
+        }
       }
 
       const acctById = new Map((accounts ?? []).map((a: any) => [a.id, a]));
@@ -90,23 +86,27 @@ function ClientReportPage() {
   }
 
   const { client, accounts, campaigns, ads, acctById } = data;
+  void campaigns; void accounts;
   const clientIdShort = client.client_code ?? (client.slug ?? "").slice(0, 8).toUpperCase();
   const portalUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/portal/${client.slug}${client.portal_token ? `?token=${client.portal_token}` : ""}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&bgcolor=0f172a&color=10b981&data=${encodeURIComponent(portalUrl)}`;
 
-  // Aggregate from assigned campaigns (preferred) or accounts fallback
-  const baseRows = campaigns.length ? campaigns : accounts;
-  const totals = baseRows.reduce(
+  // Totals come ONLY from assigned ads — same source as the client portal so
+  // numbers match Ads Manager exactly. Commission markup is applied on
+  // spend & cost-per-result so the admin sees the client-facing gross value.
+  const pct = Number(client.commission_percent) || 0;
+  const markup = client.commission_enabled && pct > 0 && pct < 100 ? 1 / (1 - pct / 100) : 1;
+  const rawTotals = (ads as any[]).reduce(
     (acc: any, r: any) => ({
-      spend: acc.spend + (Number(r.spend ?? r.total_spend) || 0),
-      impressions: acc.impressions + (Number(r.impressions ?? r.total_impressions) || 0),
-      reach: acc.reach + (Number(r.reach ?? r.total_reach) || 0),
-      clicks: acc.clicks + (Number(r.clicks ?? r.total_clicks) || 0),
-      results: acc.results + (Number(r.results ?? r.total_results) || 0),
+      spend: acc.spend + (Number(r.spend) || 0),
+      impressions: acc.impressions + (Number(r.impressions) || 0),
+      reach: Math.max(acc.reach, Number(r.reach) || 0),
+      clicks: acc.clicks + (Number(r.clicks) || 0),
+      results: acc.results + (Number(r.results) || 0),
     }),
     { spend: 0, impressions: 0, reach: 0, clicks: 0, results: 0 },
   );
-
+  const totals = { ...rawTotals, spend: rawTotals.spend * markup };
   const deposit = Number(client.deposit_amount) || 0;
   const remaining = deposit - totals.spend;
   const costPerResult = totals.results > 0 ? totals.spend / totals.results : 0;
@@ -255,7 +255,7 @@ function ClientReportPage() {
                       <td className="px-4 py-3">
                         <span className="text-[10px] font-semibold uppercase rounded-full px-2 py-0.5 bg-surface text-muted-foreground">{a.effective_status ?? "—"}</span>
                       </td>
-                      <td className="px-4 py-3 text-right font-medium">{fmtUSD(a.spend)}</td>
+                      <td className="px-4 py-3 text-right font-medium">{fmtUSD((Number(a.spend) || 0) * markup)}</td>
                       <td className="px-4 py-3 text-right text-primary font-medium">{fmtInt(a.results)}</td>
                     </tr>
                   );

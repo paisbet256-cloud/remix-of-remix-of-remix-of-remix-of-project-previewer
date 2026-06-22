@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Image as ImageIcon } from "lucide-react";
 import { StatusBadge } from "./campaigns";
 import { applyMarkup, getMarkup } from "@/lib/commission";
+import { AssignClientPopover } from "@/components/AssignClientPopover";
 
 export const Route = createFileRoute("/_authenticated/ads")({
   head: () => ({ meta: [{ title: "Ads — GrowVibe Ads Solution" }] }),
@@ -41,12 +42,13 @@ function AdsPage() {
               <th className="text-right px-4 py-3">CTR</th>
               <th className="text-right px-4 py-3">CPM</th>
               <th className="text-right px-4 py-3">Results</th>
+              <th className="text-right px-4 py-3">Assign</th>
             </tr>
           </thead>
           <tbody>
             {(items ?? []).length === 0 ? (
               <tr>
-                <td colSpan={9} className="text-center py-12 text-muted-foreground">
+                <td colSpan={10} className="text-center py-12 text-muted-foreground">
                   <ImageIcon className="size-10 mx-auto opacity-30 mb-2" />
                   No ads yet
                 </td>
@@ -89,6 +91,9 @@ function AdsPage() {
                   <td className="px-4 py-3 text-right">{Number(a.ctr).toFixed(2)}%</td>
                   <td className="px-4 py-3 text-right">${Number(a.cpm).toFixed(2)}</td>
                   <td className="px-4 py-3 text-right font-medium text-primary">{Number(a.results).toLocaleString()}</td>
+                  <td className="px-4 py-3 text-right">
+                    <AssignClientPopover adIds={[a.id]} />
+                  </td>
                 </tr>
                 );
               })

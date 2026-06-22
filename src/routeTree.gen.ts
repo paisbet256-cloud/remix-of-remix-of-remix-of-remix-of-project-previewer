@@ -13,6 +13,7 @@ import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PortalSlugRouteImport } from './routes/portal.$slug'
+import { Route as ClientCodeRouteImport } from './routes/client.$code'
 import { Route as AuthenticatedSyncActivityRouteImport } from './routes/_authenticated/sync-activity'
 import { Route as AuthenticatedSettingsRouteImport } from './routes/_authenticated/settings'
 import { Route as AuthenticatedReportsRouteImport } from './routes/_authenticated/reports'
@@ -27,6 +28,7 @@ import { Route as AuthenticatedAdsRouteImport } from './routes/_authenticated/ad
 import { Route as AuthenticatedAdSetsRouteImport } from './routes/_authenticated/ad-sets'
 import { Route as AuthenticatedClientsNewRouteImport } from './routes/_authenticated/clients_.new'
 import { Route as ApiPublicHooksSyncAllRouteImport } from './routes/api/public/hooks/sync-all'
+import { Route as ApiPublicHooksSyncAccountRouteImport } from './routes/api/public/hooks/sync-account'
 import { Route as ApiPublicHooksMetaWebhookRouteImport } from './routes/api/public/hooks/meta-webhook'
 import { Route as AuthenticatedClientsSlugReportRouteImport } from './routes/_authenticated/clients_.$slug.report'
 
@@ -47,6 +49,11 @@ const IndexRoute = IndexRouteImport.update({
 const PortalSlugRoute = PortalSlugRouteImport.update({
   id: '/portal/$slug',
   path: '/portal/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ClientCodeRoute = ClientCodeRouteImport.update({
+  id: '/client/$code',
+  path: '/client/$code',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthenticatedSyncActivityRoute =
@@ -122,6 +129,12 @@ const ApiPublicHooksSyncAllRoute = ApiPublicHooksSyncAllRouteImport.update({
   path: '/api/public/hooks/sync-all',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksSyncAccountRoute =
+  ApiPublicHooksSyncAccountRouteImport.update({
+    id: '/api/public/hooks/sync-account',
+    path: '/api/public/hooks/sync-account',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ApiPublicHooksMetaWebhookRoute =
   ApiPublicHooksMetaWebhookRouteImport.update({
     id: '/api/public/hooks/meta-webhook',
@@ -150,10 +163,12 @@ export interface FileRoutesByFullPath {
   '/reports': typeof AuthenticatedReportsRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/sync-activity': typeof AuthenticatedSyncActivityRoute
+  '/client/$code': typeof ClientCodeRoute
   '/portal/$slug': typeof PortalSlugRoute
   '/clients/new': typeof AuthenticatedClientsNewRoute
   '/clients/$slug/report': typeof AuthenticatedClientsSlugReportRoute
   '/api/public/hooks/meta-webhook': typeof ApiPublicHooksMetaWebhookRoute
+  '/api/public/hooks/sync-account': typeof ApiPublicHooksSyncAccountRoute
   '/api/public/hooks/sync-all': typeof ApiPublicHooksSyncAllRoute
 }
 export interface FileRoutesByTo {
@@ -171,10 +186,12 @@ export interface FileRoutesByTo {
   '/reports': typeof AuthenticatedReportsRoute
   '/settings': typeof AuthenticatedSettingsRoute
   '/sync-activity': typeof AuthenticatedSyncActivityRoute
+  '/client/$code': typeof ClientCodeRoute
   '/portal/$slug': typeof PortalSlugRoute
   '/clients/new': typeof AuthenticatedClientsNewRoute
   '/clients/$slug/report': typeof AuthenticatedClientsSlugReportRoute
   '/api/public/hooks/meta-webhook': typeof ApiPublicHooksMetaWebhookRoute
+  '/api/public/hooks/sync-account': typeof ApiPublicHooksSyncAccountRoute
   '/api/public/hooks/sync-all': typeof ApiPublicHooksSyncAllRoute
 }
 export interface FileRoutesById {
@@ -194,10 +211,12 @@ export interface FileRoutesById {
   '/_authenticated/reports': typeof AuthenticatedReportsRoute
   '/_authenticated/settings': typeof AuthenticatedSettingsRoute
   '/_authenticated/sync-activity': typeof AuthenticatedSyncActivityRoute
+  '/client/$code': typeof ClientCodeRoute
   '/portal/$slug': typeof PortalSlugRoute
   '/_authenticated/clients_/new': typeof AuthenticatedClientsNewRoute
   '/_authenticated/clients_/$slug/report': typeof AuthenticatedClientsSlugReportRoute
   '/api/public/hooks/meta-webhook': typeof ApiPublicHooksMetaWebhookRoute
+  '/api/public/hooks/sync-account': typeof ApiPublicHooksSyncAccountRoute
   '/api/public/hooks/sync-all': typeof ApiPublicHooksSyncAllRoute
 }
 export interface FileRouteTypes {
@@ -217,10 +236,12 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/sync-activity'
+    | '/client/$code'
     | '/portal/$slug'
     | '/clients/new'
     | '/clients/$slug/report'
     | '/api/public/hooks/meta-webhook'
+    | '/api/public/hooks/sync-account'
     | '/api/public/hooks/sync-all'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -238,10 +259,12 @@ export interface FileRouteTypes {
     | '/reports'
     | '/settings'
     | '/sync-activity'
+    | '/client/$code'
     | '/portal/$slug'
     | '/clients/new'
     | '/clients/$slug/report'
     | '/api/public/hooks/meta-webhook'
+    | '/api/public/hooks/sync-account'
     | '/api/public/hooks/sync-all'
   id:
     | '__root__'
@@ -260,10 +283,12 @@ export interface FileRouteTypes {
     | '/_authenticated/reports'
     | '/_authenticated/settings'
     | '/_authenticated/sync-activity'
+    | '/client/$code'
     | '/portal/$slug'
     | '/_authenticated/clients_/new'
     | '/_authenticated/clients_/$slug/report'
     | '/api/public/hooks/meta-webhook'
+    | '/api/public/hooks/sync-account'
     | '/api/public/hooks/sync-all'
   fileRoutesById: FileRoutesById
 }
@@ -271,8 +296,10 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   AuthRoute: typeof AuthRoute
+  ClientCodeRoute: typeof ClientCodeRoute
   PortalSlugRoute: typeof PortalSlugRoute
   ApiPublicHooksMetaWebhookRoute: typeof ApiPublicHooksMetaWebhookRoute
+  ApiPublicHooksSyncAccountRoute: typeof ApiPublicHooksSyncAccountRoute
   ApiPublicHooksSyncAllRoute: typeof ApiPublicHooksSyncAllRoute
 }
 
@@ -304,6 +331,13 @@ declare module '@tanstack/react-router' {
       path: '/portal/$slug'
       fullPath: '/portal/$slug'
       preLoaderRoute: typeof PortalSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/client/$code': {
+      id: '/client/$code'
+      path: '/client/$code'
+      fullPath: '/client/$code'
+      preLoaderRoute: typeof ClientCodeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_authenticated/sync-activity': {
@@ -404,6 +438,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicHooksSyncAllRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/sync-account': {
+      id: '/api/public/hooks/sync-account'
+      path: '/api/public/hooks/sync-account'
+      fullPath: '/api/public/hooks/sync-account'
+      preLoaderRoute: typeof ApiPublicHooksSyncAccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/hooks/meta-webhook': {
       id: '/api/public/hooks/meta-webhook'
       path: '/api/public/hooks/meta-webhook'
@@ -463,8 +504,10 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   AuthRoute: AuthRoute,
+  ClientCodeRoute: ClientCodeRoute,
   PortalSlugRoute: PortalSlugRoute,
   ApiPublicHooksMetaWebhookRoute: ApiPublicHooksMetaWebhookRoute,
+  ApiPublicHooksSyncAccountRoute: ApiPublicHooksSyncAccountRoute,
   ApiPublicHooksSyncAllRoute: ApiPublicHooksSyncAllRoute,
 }
 export const routeTree = rootRouteImport

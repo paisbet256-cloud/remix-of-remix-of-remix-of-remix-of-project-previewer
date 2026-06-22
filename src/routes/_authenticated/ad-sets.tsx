@@ -4,6 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Layers } from "lucide-react";
 import { StatusBadge } from "./campaigns";
 import { applyMarkup, getMarkup } from "@/lib/commission";
+import { AssignClientPopover } from "@/components/AssignClientPopover";
 
 export const Route = createFileRoute("/_authenticated/ad-sets")({
   head: () => ({ meta: [{ title: "Ad Sets — GrowVibe Ads Solution" }] }),
@@ -14,7 +15,10 @@ function AdSetsPage() {
   const { data: items } = useQuery({
     queryKey: ["adsets"],
     queryFn: async () => {
-      const { data } = await supabase.from("ad_sets").select("*, campaign:campaigns(name), ad_account:ad_accounts(account_name, currency, client:clients(name,commission_enabled,commission_percent))").order("spend", { ascending: false });
+      const { data } = await supabase
+        .from("ad_sets")
+        .select("*, campaign:campaigns(name), ad_account:ad_accounts(account_name, currency, client:clients(name,commission_enabled,commission_percent)), ads(id)")
+        .order("spend", { ascending: false });
       return data ?? [];
     },
   });
@@ -23,7 +27,7 @@ function AdSetsPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold">Ad Sets</h1>
-        <p className="text-muted-foreground text-sm">Ad-set level breakdown across all clients.</p>
+        <p className="text-muted-foreground text-sm">Ad-set level breakdown. "Assign" here assigns every ad inside the ad set to the chosen client.</p>
       </div>
       <div className="glass-card overflow-x-auto">
         <table className="w-full text-sm">
@@ -38,15 +42,17 @@ function AdSetsPage() {
               <th className="text-right px-4 py-3">CTR</th>
               <th className="text-right px-4 py-3">CPM</th>
               <th className="text-right px-4 py-3">Results</th>
+              <th className="text-right px-4 py-3">Assign</th>
             </tr>
           </thead>
           <tbody>
             {(items ?? []).length === 0 ? (
-              <tr><td colSpan={9} className="text-center py-12 text-muted-foreground"><Layers className="size-10 mx-auto opacity-30 mb-2" />No ad sets yet</td></tr>
+              <tr><td colSpan={10} className="text-center py-12 text-muted-foreground"><Layers className="size-10 mx-auto opacity-30 mb-2" />No ad sets yet</td></tr>
             ) : (items ?? []).map((a: any) => {
               const client = a.ad_account?.client;
               const markup = getMarkup(client?.commission_enabled, client?.commission_percent);
               const displaySpend = applyMarkup(a.spend, client?.commission_enabled, client?.commission_percent);
+              const adIds: string[] = (a.ads ?? []).map((x: any) => x.id);
               return (
               <tr key={a.id} className="border-t border-border/40 hover:bg-surface/40">
                 <td className="px-4 py-3 max-w-[280px]"><div className="font-medium truncate">{a.name}</div><div className="text-xs text-muted-foreground">{a.optimization_goal}</div></td>
@@ -63,6 +69,9 @@ function AdSetsPage() {
                 <td className="px-4 py-3 text-right">{Number(a.ctr).toFixed(2)}%</td>
                 <td className="px-4 py-3 text-right">${Number(a.cpm).toFixed(2)}</td>
                 <td className="px-4 py-3 text-right font-medium text-primary">{Number(a.results).toLocaleString()}</td>
+                <td className="px-4 py-3 text-right">
+                  <AssignClientPopover adIds={adIds} label={`Assign ${adIds.length}`} />
+                </td>
               </tr>
               );
             })}

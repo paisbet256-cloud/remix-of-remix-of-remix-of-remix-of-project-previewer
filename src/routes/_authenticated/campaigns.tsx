@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Megaphone } from "lucide-react";
 import { applyMarkup, getMarkup } from "@/lib/commission";
+import { AssignClientPopover } from "@/components/AssignClientPopover";
 
 export const Route = createFileRoute("/_authenticated/campaigns")({
   head: () => ({ meta: [{ title: "Campaigns — GrowVibe Ads Solution" }] }),
@@ -13,7 +14,10 @@ function CampaignsPage() {
   const { data: campaigns } = useQuery({
     queryKey: ["campaigns"],
     queryFn: async () => {
-      const { data } = await supabase.from("campaigns").select("*, ad_account:ad_accounts(account_name, currency, client:clients(name,slug,commission_enabled,commission_percent))").order("spend", { ascending: false });
+      const { data } = await supabase
+        .from("campaigns")
+        .select("*, ad_account:ad_accounts(account_name, currency, client:clients(name,slug,commission_enabled,commission_percent)), ads(id)")
+        .order("spend", { ascending: false });
       return data ?? [];
     },
   });
@@ -22,7 +26,7 @@ function CampaignsPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold">Campaigns</h1>
-        <p className="text-muted-foreground text-sm">All campaigns across every connected ad account, sorted by spend.</p>
+        <p className="text-muted-foreground text-sm">"Assign" here assigns every ad inside the campaign to the chosen client.</p>
       </div>
       <div className="glass-card overflow-x-auto">
         <table className="w-full text-sm">
@@ -38,15 +42,17 @@ function CampaignsPage() {
               <th className="text-right px-4 py-3">CTR</th>
               <th className="text-right px-4 py-3">CPC</th>
               <th className="text-right px-4 py-3">Results</th>
+              <th className="text-right px-4 py-3">Assign</th>
             </tr>
           </thead>
           <tbody>
             {(campaigns ?? []).length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-12 text-muted-foreground"><Megaphone className="size-10 mx-auto opacity-30 mb-2" />No campaigns yet — connect an ad account in <Link to="/clients" className="text-primary underline">Clients</Link></td></tr>
+              <tr><td colSpan={11} className="text-center py-12 text-muted-foreground"><Megaphone className="size-10 mx-auto opacity-30 mb-2" />No campaigns yet — connect an ad account in <Link to="/clients" className="text-primary underline">Clients</Link></td></tr>
             ) : (campaigns ?? []).map((c: any) => {
               const client = c.ad_account?.client;
               const markup = getMarkup(client?.commission_enabled, client?.commission_percent);
               const displaySpend = applyMarkup(c.spend, client?.commission_enabled, client?.commission_percent);
+              const adIds: string[] = (c.ads ?? []).map((x: any) => x.id);
               return (
               <tr key={c.id} className="border-t border-border/40 hover:bg-surface/40">
                 <td className="px-4 py-3 max-w-[300px]">
@@ -67,6 +73,9 @@ function CampaignsPage() {
                 <td className="px-4 py-3 text-right">{(Number(c.ctr) * 1).toFixed(2)}%</td>
                 <td className="px-4 py-3 text-right">${Number(c.cpc).toFixed(2)}</td>
                 <td className="px-4 py-3 text-right font-medium text-primary">{Number(c.results).toLocaleString()}</td>
+                <td className="px-4 py-3 text-right">
+                  <AssignClientPopover adIds={adIds} label={`Assign ${adIds.length}`} />
+                </td>
               </tr>
               );
             })}

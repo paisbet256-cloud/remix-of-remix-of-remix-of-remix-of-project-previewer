@@ -68,7 +68,7 @@ async function bulkUpsert(table: string, rows: any[], onConflict: string, chunkS
   if (rows.length === 0) return;
   for (let i = 0; i < rows.length; i += chunkSize) {
     const chunk = rows.slice(i, i + chunkSize);
-    const { error } = await supabaseAdmin.from(table).upsert(chunk, { onConflict });
+    const { error } = await (supabaseAdmin as any).from(table).upsert(chunk, { onConflict });
     if (error) throw new Error(`${table} upsert: ${error.message}`);
   }
 }
@@ -375,7 +375,7 @@ export async function syncAdAccount(adAccountId: string) {
       accountUpdate.total_clicks = Number((acctInsights as any).clicks) || 0;
       accountUpdate.total_results = extractPrimaryResults((acctInsights as any).actions);
     }
-    await supabaseAdmin.from("ad_accounts").update(accountUpdate).eq("id", account.id);
+    await supabaseAdmin.from("ad_accounts").update(accountUpdate as any).eq("id", account.id);
   } catch (e) {
     error = e instanceof FbApiError
       ? `[FB ${e.code ?? ""}] ${e.message}${e.fbtrace_id ? ` (trace ${e.fbtrace_id})` : ""}`

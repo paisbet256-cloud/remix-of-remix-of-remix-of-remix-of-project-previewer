@@ -385,7 +385,7 @@ export const createClient = createServerFn({ method: "POST" })
       commission_notes: z.string().max(2000).optional(),
       brand_color: z.string().max(20).optional(),
       ad_account_ids: z.array(z.string()).optional(),
-      campaign_ids: z.array(z.string().uuid()).optional(),
+      ad_ids: z.array(z.string().uuid()).optional(),
     }).parse(d))
   .handler(async ({ data, context }) => {
     const supabaseAdmin = await requireAdmin(context.userId);
@@ -442,10 +442,12 @@ export const createClient = createServerFn({ method: "POST" })
         } catch (e) { /* keep saving the partner even if one account fails */ }
       }
     }
-    if (data.campaign_ids && data.campaign_ids.length > 0 && row) {
-      const rows = data.campaign_ids.map((campaignId: string) => ({ client_id: row.id, campaign_id: campaignId }));
-      const { error: campaignError } = await supabaseAdmin.from("client_campaigns").upsert(rows, { onConflict: "client_id,campaign_id" });
-      if (campaignError) throw new Error(campaignError.message);
+    if (data.ad_ids && data.ad_ids.length > 0 && row) {
+      const rows = data.ad_ids.map((adId: string) => ({ client_id: row.id, ad_id: adId, created_by: context.userId }));
+      const { error: adsError } = await (supabaseAdmin as any)
+        .from("client_ads")
+        .upsert(rows, { onConflict: "client_id,ad_id" });
+      if (adsError) throw new Error(adsError.message);
     }
     return row;
   });
@@ -471,13 +473,140 @@ export const updateClient = createServerFn({ method: "POST" })
     commission_notes: z.string().optional(),
     brand_color: z.string().optional(),
     status: z.enum(["active", "paused", "archived"]).optional(),
+    // When provided, REPLACES the full set of ads assigned to this client.
+    ad_ids: z.array(z.string().uuid()).optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
-    const { id, ...rest } = data;
-    const { error } = await context.supabase.from("clients").update(rest).eq("id", id);
-    if (error) throw new Error(error.message);
+    const supabaseAdmin = await requireAdmin(context.userId);
+    const { id, ad_ids, ...rest } = data;
+    if (Object.keys(rest).length > 0) {
+      const { error } = await context.supabase.from("clients").update(rest).eq("id", id);
+      if (error) throw new Error(error.message);
+    }
+    if (ad_ids !== undefined) {
+      // Replace strategy: delete current then insert the new set.
+      await (supabaseAdmin as any).from("client_ads").delete().eq("client_id", id);
+      if (ad_ids.length > 0) {
+        const rows = ad_ids.map((adId) => ({ client_id: id, ad_id: adId, created_by: context.userId }));
+        const { error } = await (supabaseAdmin as any)
+          .from("client_ads")
+          .upsert(rows, { onConflict: "client_id,ad_id" });
+        if (error) throw new Error(error.message);
+      }
+    }
     return { ok: true };
   });
+
+// ============ Per-ad assignment helpers (used by the popover + admin pages) ============
+
+export const listClientsForPicker = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("clients")
+      .select("id,name,company,status")
+      .neq("status", "archived")
+      .order("name");
+    if (error) throw new Error(error.message);
+    return data ?? [];
+  });
+
+export const assignAdsToClient = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { client_id: string; ad_ids: string[] }) =>
+    z.object({
+      client_id: z.string().uuid(),
+      ad_ids: z.array(z.string().uuid()).min(1),
+    }).parse(d))
+  .handler(async ({ data, context }) => {
+    const supabaseAdmin = await requireAdmin(context.userId);
+    const rows = data.ad_ids.map((ad_id) => ({ client_id: data.client_id, ad_id, created_by: context.userId }));
+    const { error } = await (supabaseAdmin as any)
+      .from("client_ads")
+      .upsert(rows, { onConflict: "client_id,ad_id" });
+    if (error) throw new Error(error.message);
+    return { ok: true, count: data.ad_ids.length };
+  });
+
+export const unassignAdsFromClient = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { client_id: string; ad_ids: string[] }) =>
+    z.object({
+      client_id: z.string().uuid(),
+      ad_ids: z.array(z.string().uuid()).min(1),
+    }).parse(d))
+  .handler(async ({ data, context }) => {
+    const supabaseAdmin = await requireAdmin(context.userId);
+    const { error } = await (supabaseAdmin as any)
+      .from("client_ads")
+      .delete()
+      .eq("client_id", data.client_id)
+      .in("ad_id", data.ad_ids);
+    if (error) throw new Error(error.message);
+    return { ok: true, count: data.ad_ids.length };
+  });
+
+// Given a list of ad UUIDs, return { client_id: count_of_those_ads_assigned }.
+export const getClientAdIdsForAds = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { ad_ids: string[] }) =>
+    z.object({ ad_ids: z.array(z.string().uuid()).min(1) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = await (context.supabase as any)
+      .from("client_ads")
+      .select("client_id,ad_id")
+      .in("ad_id", data.ad_ids);
+    if (error) throw new Error(error.message);
+    const counts: Record<string, number> = {};
+    for (const r of (rows ?? []) as any[]) {
+      counts[r.client_id] = (counts[r.client_id] ?? 0) + 1;
+    }
+    return counts;
+  });
+
+// Used by the Edit Partner form to load the currently-assigned ad IDs.
+export const getAssignedAdIds = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: { client_id: string }) =>
+    z.object({ client_id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: rows, error } = await (context.supabase as any)
+      .from("client_ads")
+      .select("ad_id")
+      .eq("client_id", data.client_id);
+    if (error) throw new Error(error.message);
+    return ((rows ?? []) as any[]).map((r) => r.ad_id as string);
+  });
+
+// Lists every synced ad in the local DB so the Edit Partner picker can show
+// them grouped by campaign + ad set. Avoids hitting Meta live — fast & cheap.
+export const listAvailableAdsForPicker = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase
+      .from("ads")
+      .select("id,name,fb_ad_id,effective_status,spend,creative_thumbnail,campaign:campaigns(id,name),ad_set:ad_sets(id,name),ad_account:ad_accounts(id,account_name,fb_account_id,currency)")
+      .order("spend", { ascending: false })
+      .limit(2000);
+    if (error) throw new Error(error.message);
+    return (data ?? []).map((a: any) => ({
+      id: a.id,
+      name: a.name,
+      fb_ad_id: a.fb_ad_id,
+      status: a.effective_status,
+      spend: Number(a.spend) || 0,
+      thumbnail: a.creative_thumbnail,
+      campaign_id: a.campaign?.id ?? null,
+      campaign_name: a.campaign?.name ?? "(unknown campaign)",
+      ad_set_id: a.ad_set?.id ?? null,
+      ad_set_name: a.ad_set?.name ?? "(unknown ad set)",
+      account_id: a.ad_account?.id ?? null,
+      account_name: a.ad_account?.account_name ?? a.ad_account?.fb_account_id ?? "(account)",
+      currency: a.ad_account?.currency ?? null,
+    }));
+  });
+
+
 
 
 export const deleteClient = createServerFn({ method: "POST" })
