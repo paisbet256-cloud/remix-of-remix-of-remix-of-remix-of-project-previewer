@@ -17,6 +17,13 @@ function fmtUSD(n: number) {
 }
 function fmtInt(n: number) { return (Number(n) || 0).toLocaleString(); }
 
+// Safely capitalize a possibly-null/undefined status value.
+function titleCase(s: unknown): string {
+  const v = String(s ?? "").trim();
+  if (!v) return "Unknown";
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
 function ClientReportPage() {
   const { slug } = Route.useParams();
 
@@ -40,7 +47,6 @@ function ClientReportPage() {
         .eq("client_id", client.id);
       if (accountsError) throw accountsError;
 
-      // Per-ad assignment is the single source of truth for the report page.
       const { data: assigned, error: assignedError } = await (supabase as any)
         .from("client_ads")
         .select("ad_id")
@@ -91,9 +97,6 @@ function ClientReportPage() {
   const portalUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/portal/${client.slug}${client.portal_token ? `?token=${client.portal_token}` : ""}`;
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&margin=8&bgcolor=0f172a&color=10b981&data=${encodeURIComponent(portalUrl)}`;
 
-  // Totals come ONLY from assigned ads — same source as the client portal so
-  // numbers match Ads Manager exactly. Commission markup is applied on
-  // spend & cost-per-result so the admin sees the client-facing gross value.
   const pct = Number(client.commission_percent) || 0;
   const markup = client.commission_enabled && pct > 0 && pct < 100 ? 1 / (1 - pct / 100) : 1;
   const rawTotals = (ads as any[]).reduce(
@@ -121,6 +124,13 @@ function ClientReportPage() {
     }
   };
 
+  const status = client.status ?? "unknown";
+  const statusPillCls =
+    status === "active" ? "bg-emerald-500/15 text-emerald-400"
+    : status === "paused" ? "bg-amber-500/15 text-amber-400"
+    : "bg-muted/40 text-muted-foreground";
+  const statusDotCls = status === "active" ? "bg-emerald-400" : "bg-muted-foreground";
+
   return (
     <div className="space-y-6">
       <Link to="/clients" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
@@ -131,13 +141,9 @@ function ClientReportPage() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3 min-w-0 flex-wrap">
           <h1 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold tracking-tight break-words">{client.name}</h1>
-          <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
-            client.status === "active" ? "bg-emerald-500/15 text-emerald-400"
-            : client.status === "paused" ? "bg-amber-500/15 text-amber-400"
-            : "bg-muted/40 text-muted-foreground"
-          }`}>
-            <span className={`size-1.5 rounded-full ${client.status === "active" ? "bg-emerald-400" : "bg-muted-foreground"}`} />
-            {String(client.status).charAt(0).toUpperCase() + String(client.status).slice(1)}
+          <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${statusPillCls}`}>
+            <span className={`size-1.5 rounded-full ${statusDotCls}`} />
+            {titleCase(status)}
           </span>
         </div>
         <div className="flex items-center gap-2">

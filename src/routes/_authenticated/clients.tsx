@@ -23,28 +23,21 @@ function fmtBDT(n: number) {
   return `৳${Math.round(Number(n) || 0).toLocaleString()}`;
 }
 
-/**
- * Convert an ad-account's native-currency spend into USD.
- *
- * Why this exists: `ad_accounts.total_spend` is whatever currency Meta
- * returns for that account (BDT, USD, EUR, …). Previously the Clients page
- * summed those raw numbers as if every one was USD, so a BDT account with
- * spend = 12,000 would be treated as $12,000 instead of ~$110 — making
- * "Remaining Balance" wildly negative or, when the deposit lived in BDT,
- * making "Total Spent" look like $0 next to it. We now normalise to USD
- * using the client's stored `bdt_rate` (BDT per 1 USD).
- */
+// Safely capitalize a possibly-null/undefined status value.
+function titleCase(s: unknown): string {
+  const v = String(s ?? "").trim();
+  if (!v) return "Unknown";
+  return v.charAt(0).toUpperCase() + v.slice(1);
+}
+
 function accountSpendToUsd(spend: number, currency: string | null | undefined, bdtRate: number): number {
   if (!Number.isFinite(spend) || spend === 0) return 0;
   const ccy = (currency || "USD").toUpperCase();
   if (ccy === "USD") return spend;
   if (ccy === "BDT") {
-    // Need a positive rate, otherwise we'd divide by zero and produce Infinity.
     if (bdtRate > 0) return spend / bdtRate;
     return 0;
   }
-  // Unknown currency — fall back to treating it as USD rather than silently
-  // dropping the value (keeps the user's attention on a misconfigured acct).
   return spend;
 }
 
@@ -67,7 +60,7 @@ function ClientsPage() {
   });
 
   const filtered = (clients ?? []).filter((c: any) => {
-    if (statusFilter !== "all" && c.status !== statusFilter) return false;
+    if (statusFilter !== "all" && (c.status ?? "") !== statusFilter) return false;
     if (!search) return true;
     const q = search.toLowerCase();
     return c.name?.toLowerCase().includes(q) || c.slug?.includes(q) || c.company?.toLowerCase().includes(q);
@@ -160,10 +153,6 @@ function ClientsPage() {
                 </tr>
               ) : (
                 filtered.map((c: any) => {
-                  // --- Fix #3: Total Spend / Remaining Balance formula ---
-                  // Deposit is stored in USD (deposit_amount). bdt_rate is BDT per 1 USD.
-                  // Each ad account's total_spend is in its OWN currency, so we must
-                  // convert per-account to USD before summing.
                   const bdtRate = Number(c.bdt_rate) || 0;
                   const accounts = Array.isArray(c.ad_accounts) ? c.ad_accounts : [];
 
@@ -171,10 +160,20 @@ function ClientsPage() {
                     return sum + accountSpendToUsd(Number(a?.total_spend) || 0, a?.currency, bdtRate);
                   }, 0);
 
-                  const deposit = Number(c.deposit_amount) || 0;       // USD
-                  const remaining = deposit - totalSpentUsd;            // USD
+                  const deposit = Number(c.deposit_amount) || 0;
+                  const remaining = deposit - totalSpentUsd;
                   const acctCount = accounts.length;
                   const showBdt = c.deposit_currency === "BDT" && bdtRate > 0;
+
+                  const status = c.status ?? "unknown";
+                  const statusPillCls =
+                    status === "active" ? "bg-emerald-500/15 text-emerald-400"
+                    : status === "paused" ? "bg-amber-500/15 text-amber-400"
+                    : "bg-muted/40 text-muted-foreground";
+                  const statusDotCls =
+                    status === "active" ? "bg-emerald-400"
+                    : status === "paused" ? "bg-amber-400"
+                    : "bg-muted-foreground";
 
                   return (
                     <tr key={c.id} className="border-t border-border/40 hover:bg-surface/40">
@@ -201,13 +200,9 @@ function ClientsPage() {
                         <code className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400 font-mono">{c.client_code ?? c.slug?.slice(0, 8).toUpperCase()}</code>
                       </td>
                       <td className="px-4 py-4">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${
-                          c.status === "active" ? "bg-emerald-500/15 text-emerald-400"
-                          : c.status === "paused" ? "bg-amber-500/15 text-amber-400"
-                          : "bg-muted/40 text-muted-foreground"
-                        }`}>
-                          <span className={`size-1.5 rounded-full ${c.status === "active" ? "bg-emerald-400" : c.status === "paused" ? "bg-amber-400" : "bg-muted-foreground"}`} />
-                          {c.status.charAt(0).toUpperCase() + c.status.slice(1)}
+                        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full ${statusPillCls}`}>
+                          <span className={`size-1.5 rounded-full ${statusDotCls}`} />
+                          {titleCase(status)}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-right">
