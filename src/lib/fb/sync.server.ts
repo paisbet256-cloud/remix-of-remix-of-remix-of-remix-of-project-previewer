@@ -1,7 +1,13 @@
 // Sync engine — SERVER ONLY.
+// Dispatch pattern + bulk-upsert. Each per-account sync runs in its own
+// Worker invocation via /api/public/hooks/sync-account (fresh 1000-subrequest
+// budget). Inside each invocation we merge entity metadata + insights in
+// memory and write ONE upsert per level (campaigns/ad_sets/ads) instead of
+// looping per-row, so we stay well under the Cloudflare subrequest cap.
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { fb, extractPrimaryResults, FbApiError } from "./api.server";
 import { checkTokenHealth } from "./permissions.server";
+import { getRequest } from "@tanstack/react-start/server";
 
 async function getLegacyToken(): Promise<string | null> {
   const { data } = await supabaseAdmin.from("app_settings").select("fb_system_user_token").eq("id", 1).maybeSingle();
@@ -57,6 +63,16 @@ async function importVisibleAccountsForSync(token: string) {
   return { imported: imported?.length ?? 0 };
 }
 
+// Chunked upsert helper — keeps payloads under Supabase request limits.
+async function bulkUpsert(table: string, rows: any[], onConflict: string, chunkSize = 500) {
+  if (rows.length === 0) return;
+  for (let i = 0; i < rows.length; i += chunkSize) {
+    const chunk = rows.slice(i, i + chunkSize);
+    const { error } = await supabaseAdmin.from(table).upsert(chunk, { onConflict });
+    if (error) throw new Error(`${table} upsert: ${error.message}`);
+  }
+}
+
 export async function syncAdAccount(adAccountId: string) {
   const started = Date.now();
   const { data: account } = await supabaseAdmin
@@ -78,11 +94,88 @@ export async function syncAdAccount(adAccountId: string) {
     const token = await getTokenForAccount(account.id);
     const actId = account.fb_account_id;
 
-    const info = await fb.getAccount(actId, token);
+    // ------- 1) Fetch everything from Facebook in parallel -------
+    const [
+      info,
+      campaigns,
+      adSets,
+      ads,
+      acctInsights,
+      campInsights,
+      asInsights,
+      adInsights,
+      ts,
+      campTs,
+      adsetTs,
+    ] = await Promise.all([
+      fb.getAccount(actId, token),
+      fb.listCampaigns(actId, token),
+      fb.listAdSets(actId, token),
+      fb.listAds(actId, token),
+      fb.getAccountInsights(actId, token, "maximum"),
+      fb.getInsights(actId, token, "maximum", "campaign"),
+      fb.getInsights(actId, token, "maximum", "adset"),
+      fb.getInsights(actId, token, "maximum", "ad"),
+      fb.getTimeSeries(actId, token, "last_30d"),
+      fb.getCampaignTimeSeries(actId, token, [], "last_30d"),
+      fb.getAdSetTimeSeries(actId, token, "last_30d"),
+    ]);
 
-    const campaigns = await fb.listCampaigns(actId, token);
+    const nowIso = new Date().toISOString();
+    const adSetGoalByFbId = new Map<string, string>();
+    for (const a of adSets as any[]) {
+      if (a.optimization_goal) adSetGoalByFbId.set(a.id, a.optimization_goal);
+    }
+
+    // ------- 2) Build per-FB-id insight maps so metadata + metrics merge in memory -------
+    const campMetrics = new Map<string, any>();
+    for (const row of (campInsights as any[]) ?? []) {
+      campMetrics.set(row.campaign_id, {
+        spend: Number(row.spend) || 0,
+        reach: Number(row.reach) || 0,
+        impressions: Number(row.impressions) || 0,
+        clicks: Number(row.clicks) || 0,
+        ctr: Number(row.ctr) || 0,
+        cpc: Number(row.cpc) || 0,
+        cpm: Number(row.cpm) || 0,
+        frequency: Number(row.frequency) || 0,
+        results: extractPrimaryResults(row.actions, row.optimization_goal),
+      });
+    }
+    const adsetMetrics = new Map<string, any>();
+    for (const row of (asInsights as any[]) ?? []) {
+      adsetMetrics.set(row.adset_id, {
+        spend: Number(row.spend) || 0,
+        reach: Number(row.reach) || 0,
+        impressions: Number(row.impressions) || 0,
+        clicks: Number(row.clicks) || 0,
+        ctr: Number(row.ctr) || 0,
+        cpc: Number(row.cpc) || 0,
+        cpm: Number(row.cpm) || 0,
+        frequency: Number(row.frequency) || 0,
+        results: extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id)),
+      });
+    }
+    const adMetrics = new Map<string, any>();
+    for (const row of (adInsights as any[]) ?? []) {
+      adMetrics.set(row.ad_id, {
+        spend: Number(row.spend) || 0,
+        reach: Number(row.reach) || 0,
+        impressions: Number(row.impressions) || 0,
+        clicks: Number(row.clicks) || 0,
+        ctr: Number(row.ctr) || 0,
+        cpc: Number(row.cpc) || 0,
+        cpm: Number(row.cpm) || 0,
+        frequency: Number(row.frequency) || 0,
+        results: extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id)),
+      });
+    }
+
+    const zero = { spend: 0, reach: 0, impressions: 0, clicks: 0, ctr: 0, cpc: 0, cpm: 0, frequency: 0, results: 0 };
+
+    // ------- 3) CAMPAIGNS: single bulk upsert with metadata + metrics merged -------
     if (campaigns.length > 0) {
-      const rows = campaigns.map((c: any) => ({
+      const rows = (campaigns as any[]).map((c) => ({
         ad_account_id: account.id,
         fb_campaign_id: c.id,
         name: c.name,
@@ -94,22 +187,20 @@ export async function syncAdAccount(adAccountId: string) {
         buying_type: c.buying_type ?? null,
         start_time: c.start_time ?? null,
         stop_time: c.stop_time ?? null,
-        last_sync_at: new Date().toISOString(),
+        last_sync_at: nowIso,
+        ...(campMetrics.get(c.id) ?? zero),
       }));
-      const { error: e1 } = await supabaseAdmin.from("campaigns").upsert(rows, { onConflict: "fb_campaign_id" });
-      if (e1) throw new Error(`campaigns upsert: ${e1.message}`);
-      itemsSynced += campaigns.length;
+      await bulkUpsert("campaigns", rows, "fb_campaign_id");
+      itemsSynced += rows.length;
     }
 
-    // Capture optimization_goal per ad set so we can map "Results" correctly.
-    const adSets = await fb.listAdSets(actId, token);
-    const adSetGoalByFbId = new Map<string, string>();
+    // ------- 4) AD SETS: need campaign UUID lookup (one SELECT) then single bulk upsert -------
     if (adSets.length > 0) {
       const { data: cps } = await supabaseAdmin.from("campaigns").select("id,fb_campaign_id").eq("ad_account_id", account.id);
       const cpMap = new Map((cps ?? []).map((c) => [c.fb_campaign_id, c.id]));
-      const rows = adSets.filter((a: any) => cpMap.has(a.campaign_id)).map((a: any) => {
-        if (a.optimization_goal) adSetGoalByFbId.set(a.id, a.optimization_goal);
-        return {
+      const rows = (adSets as any[])
+        .filter((a) => cpMap.has(a.campaign_id))
+        .map((a) => ({
           campaign_id: cpMap.get(a.campaign_id)!,
           ad_account_id: account.id,
           fb_adset_id: a.id,
@@ -123,132 +214,49 @@ export async function syncAdAccount(adAccountId: string) {
           bid_amount: a.bid_amount ? Number(a.bid_amount) / 100 : null,
           start_time: a.start_time ?? null,
           end_time: a.end_time ?? null,
-          last_sync_at: new Date().toISOString(),
-        };
-      });
-      if (rows.length > 0) {
-        const { error: e2 } = await supabaseAdmin.from("ad_sets").upsert(rows, { onConflict: "fb_adset_id" });
-        if (e2) throw new Error(`ad_sets upsert: ${e2.message}`);
-      }
+          last_sync_at: nowIso,
+          ...(adsetMetrics.get(a.id) ?? zero),
+        }));
+      await bulkUpsert("ad_sets", rows, "fb_adset_id");
       itemsSynced += rows.length;
     }
 
-    const ads = await fb.listAds(actId, token);
+    // ------- 5) ADS: lookup campaign + adset UUIDs (two SELECTs) then single bulk upsert -------
     if (ads.length > 0) {
-      const { data: cps } = await supabaseAdmin.from("campaigns").select("id,fb_campaign_id").eq("ad_account_id", account.id);
-      const { data: aset } = await supabaseAdmin.from("ad_sets").select("id,fb_adset_id").eq("ad_account_id", account.id);
+      const [{ data: cps }, { data: aset }] = await Promise.all([
+        supabaseAdmin.from("campaigns").select("id,fb_campaign_id").eq("ad_account_id", account.id),
+        supabaseAdmin.from("ad_sets").select("id,fb_adset_id").eq("ad_account_id", account.id),
+      ]);
       const cpMap = new Map((cps ?? []).map((c) => [c.fb_campaign_id, c.id]));
       const asMap = new Map((aset ?? []).map((a) => [a.fb_adset_id, a.id]));
-      const rows = ads.filter((a: any) => cpMap.has(a.campaign_id) && asMap.has(a.adset_id)).map((a: any) => ({
-        ad_set_id: asMap.get(a.adset_id)!,
-        campaign_id: cpMap.get(a.campaign_id)!,
-        ad_account_id: account.id,
-        fb_ad_id: a.id,
-        name: a.name,
-        status: a.status ?? null,
-        effective_status: a.effective_status ?? null,
-        creative_thumbnail: a.creative?.thumbnail_url ?? null,
-        creative_id: a.creative?.id ?? null,
-        last_sync_at: new Date().toISOString(),
-      }));
-      if (rows.length > 0) {
-        const { error: e3 } = await supabaseAdmin.from("ads").upsert(rows, { onConflict: "fb_ad_id" });
-        if (e3) throw new Error(`ads upsert: ${e3.message}`);
-      }
+      const rows = (ads as any[])
+        .filter((a) => cpMap.has(a.campaign_id) && asMap.has(a.adset_id))
+        .map((a) => ({
+          ad_set_id: asMap.get(a.adset_id)!,
+          campaign_id: cpMap.get(a.campaign_id)!,
+          ad_account_id: account.id,
+          fb_ad_id: a.id,
+          name: a.name,
+          status: a.status ?? null,
+          effective_status: a.effective_status ?? null,
+          creative_thumbnail: a.creative?.thumbnail_url ?? null,
+          creative_id: a.creative?.id ?? null,
+          last_sync_at: nowIso,
+          ...(adMetrics.get(a.id) ?? zero),
+        }));
+      await bulkUpsert("ads", rows, "fb_ad_id");
       itemsSynced += rows.length;
     }
 
-    // Entity tables show MAXIMUM range to match Ads Manager's default.
-    // NOTE: Each of these calls can come back empty if Meta rate-limits the
-    // request (very common at adset/ad level). We must NOT zero out the
-    // existing saved metrics in that case — otherwise a single rate-limited
-    // sync wipes the entire Ad Performance table to zeros until the limit
-    // clears (up to an hour).
-    const acctInsights = await fb.getAccountInsights(actId, token, "maximum");
-    const campInsights = await fb.getInsights(actId, token, "maximum", "campaign");
-    const asInsights = await fb.getInsights(actId, token, "maximum", "adset");
-    const adInsights = await fb.getInsights(actId, token, "maximum", "ad");
-
-    // Graceful degradation: only reset metrics at a level if we actually
-    // received fresh insights for that level. If the API returned nothing
-    // (rate-limit, transient error), keep the previously saved numbers.
-    const zeroMetrics = {
-      spend: 0, reach: 0, impressions: 0, clicks: 0,
-      ctr: 0, cpc: 0, cpm: 0, frequency: 0, results: 0,
-    };
-
-    if (campInsights.length > 0) {
-      await supabaseAdmin.from("campaigns").update(zeroMetrics).eq("ad_account_id", account.id);
-      for (const row of campInsights as any[]) {
-        await supabaseAdmin.from("campaigns").update({
-          spend: Number(row.spend) || 0,
-          reach: Number(row.reach) || 0,
-          impressions: Number(row.impressions) || 0,
-          clicks: Number(row.clicks) || 0,
-          ctr: Number(row.ctr) || 0,
-          cpc: Number(row.cpc) || 0,
-          cpm: Number(row.cpm) || 0,
-          frequency: Number(row.frequency) || 0,
-          results: extractPrimaryResults(row.actions, row.optimization_goal),
-        }).eq("fb_campaign_id", row.campaign_id).eq("ad_account_id", account.id);
-      }
-    } else {
-      console.warn(`[syncAdAccount] no campaign insights returned for ${account.account_name ?? actId} — keeping previous values`);
-    }
-
-    if (asInsights.length > 0) {
-      await supabaseAdmin.from("ad_sets").update(zeroMetrics).eq("ad_account_id", account.id);
-      for (const row of asInsights as any[]) {
-        await supabaseAdmin.from("ad_sets").update({
-          spend: Number(row.spend) || 0,
-          reach: Number(row.reach) || 0,
-          impressions: Number(row.impressions) || 0,
-          clicks: Number(row.clicks) || 0,
-          ctr: Number(row.ctr) || 0,
-          cpc: Number(row.cpc) || 0,
-          cpm: Number(row.cpm) || 0,
-          frequency: Number(row.frequency) || 0,
-          results: extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id)),
-        }).eq("fb_adset_id", row.adset_id).eq("ad_account_id", account.id);
-      }
-    } else {
-      console.warn(`[syncAdAccount] no ad-set insights returned for ${account.account_name ?? actId} — keeping previous values`);
-    }
-
-    if (adInsights.length > 0) {
-      await supabaseAdmin.from("ads").update(zeroMetrics).eq("ad_account_id", account.id);
-      for (const row of adInsights as any[]) {
-        const goal = row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id);
-        await supabaseAdmin.from("ads").update({
-          spend: Number(row.spend) || 0,
-          reach: Number(row.reach) || 0,
-          impressions: Number(row.impressions) || 0,
-          clicks: Number(row.clicks) || 0,
-          ctr: Number(row.ctr) || 0,
-          cpc: Number(row.cpc) || 0,
-          cpm: Number(row.cpm) || 0,
-          frequency: Number(row.frequency) || 0,
-          results: extractPrimaryResults(row.actions, goal),
-        }).eq("fb_ad_id", row.ad_id).eq("ad_account_id", account.id);
-      }
-    } else {
-      console.warn(`[syncAdAccount] no ad insights returned for ${account.account_name ?? actId} — keeping previous values`);
-    }
-
+    // ------- 6) Time-series snapshots — bulk upsert per level -------
     const snapshotSince = new Date();
     snapshotSince.setUTCDate(snapshotSince.getUTCDate() - 29);
     const snapshotSinceStr = snapshotSince.toISOString().slice(0, 10);
 
-    const ts = await fb.getTimeSeries(actId, token, "last_30d");
     if (ts.length > 0) {
-      await supabaseAdmin
-        .from("insights_snapshots")
-        .delete()
-        .eq("ad_account_id", account.id)
-        .eq("level", "account")
-        .gte("date_start", snapshotSinceStr);
-
-      const tsRows = (ts as any[]).map((r) => ({
+      await supabaseAdmin.from("insights_snapshots").delete()
+        .eq("ad_account_id", account.id).eq("level", "account").gte("date_start", snapshotSinceStr);
+      const rows = (ts as any[]).map((r) => ({
         ad_account_id: account.id,
         level: "account" as const,
         entity_id: actId,
@@ -264,21 +272,13 @@ export async function syncAdAccount(adAccountId: string) {
         frequency: Number(r.frequency) || 0,
         results: extractPrimaryResults(r.actions),
       }));
-      await supabaseAdmin.from("insights_snapshots").upsert(tsRows, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
-    } else {
-      console.warn(`[syncAdAccount] no account time-series for ${account.account_name ?? actId} — keeping previous snapshots`);
+      await bulkUpsert("insights_snapshots", rows, "ad_account_id,level,entity_id,date_start,date_stop");
     }
 
-    const campTs = await fb.getCampaignTimeSeries(actId, token, [], "last_30d");
     if (campTs.length > 0) {
-      await supabaseAdmin
-        .from("insights_snapshots")
-        .delete()
-        .eq("ad_account_id", account.id)
-        .eq("level", "campaign")
-        .gte("date_start", snapshotSinceStr);
-
-      const campTsRows = (campTs as any[]).map((r) => ({
+      await supabaseAdmin.from("insights_snapshots").delete()
+        .eq("ad_account_id", account.id).eq("level", "campaign").gte("date_start", snapshotSinceStr);
+      const rows = (campTs as any[]).map((r) => ({
         ad_account_id: account.id,
         level: "campaign" as const,
         entity_id: r.campaign_id,
@@ -294,34 +294,13 @@ export async function syncAdAccount(adAccountId: string) {
         frequency: Number(r.frequency) || 0,
         results: extractPrimaryResults(r.actions, r.optimization_goal),
       }));
-      for (let i = 0; i < campTsRows.length; i += 500) {
-        const chunk = campTsRows.slice(i, i + 500);
-        await supabaseAdmin.from("insights_snapshots").upsert(chunk, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
-      }
-    } else {
-      console.warn(`[syncAdAccount] no campaign time-series for ${account.account_name ?? actId} — keeping previous snapshots`);
+      await bulkUpsert("insights_snapshots", rows, "ad_account_id,level,entity_id,date_start,date_stop");
     }
 
-    // ============ AD SET daily time series ============
-    // Ground-truth per-day adset metrics. The "maximum" preset call earlier in
-    // this sync sometimes returns NO row for brand-new ad sets, leaving the
-    // ad_sets table at zero. We store daily snapshots here so the portal can
-    // aggregate adset metrics from the same source as the top dashboard
-    // (no chance of mismatch between top KPIs and the Ad Set table).
-    //
-    // IMPORTANT: only delete existing snapshots if Facebook actually returned
-    // new rows. Otherwise a rate-limited request would wipe the Ad Performance
-    // table to empty until the next successful sync.
-    const adsetTs = await fb.getAdSetTimeSeries(actId, token, "last_30d");
     if (adsetTs.length > 0) {
-      await supabaseAdmin
-        .from("insights_snapshots")
-        .delete()
-        .eq("ad_account_id", account.id)
-        .eq("level", "adset")
-        .gte("date_start", snapshotSinceStr);
-
-      const adsetTsRows = (adsetTs as any[]).map((r) => ({
+      await supabaseAdmin.from("insights_snapshots").delete()
+        .eq("ad_account_id", account.id).eq("level", "adset").gte("date_start", snapshotSinceStr);
+      const rows = (adsetTs as any[]).map((r) => ({
         ad_account_id: account.id,
         level: "adset" as const,
         entity_id: r.adset_id,
@@ -337,16 +316,9 @@ export async function syncAdAccount(adAccountId: string) {
         frequency: Number(r.frequency) || 0,
         results: extractPrimaryResults(r.actions, r.optimization_goal ?? adSetGoalByFbId.get(r.adset_id)),
       }));
-      for (let i = 0; i < adsetTsRows.length; i += 500) {
-        const chunk = adsetTsRows.slice(i, i + 500);
-        await supabaseAdmin.from("insights_snapshots").upsert(chunk, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
-      }
+      await bulkUpsert("insights_snapshots", rows, "ad_account_id,level,entity_id,date_start,date_stop");
 
-      // Roll the daily rows up into the ad_sets table so any consumer reading
-      // ad_sets.* directly (older queries, exports) also sees real numbers.
-      // This OVERWRITES the earlier "maximum"-preset update because the
-      // last_30d rollup is more reliable for new ad sets than Meta's
-      // "maximum" preset (which can return nothing on day 1).
+      // Roll up ad_sets totals from the time-series — bulk upsert (one call)
       const agg = new Map<string, { spend: number; reach: number; impressions: number; clicks: number; results: number; goal?: string | null }>();
       for (const r of adsetTs as any[]) {
         const id = r.adset_id;
@@ -356,34 +328,35 @@ export async function syncAdAccount(adAccountId: string) {
         cur.impressions += Number(r.impressions) || 0;
         cur.clicks      += Number(r.clicks) || 0;
         cur.results     += extractPrimaryResults(r.actions, cur.goal);
-        // reach is unique users — take max across days (sum would double count).
         cur.reach = Math.max(cur.reach, Number(r.reach) || 0);
         agg.set(id, cur);
       }
-      for (const [fbAdsetId, v] of agg) {
-        const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
-        const cpc = v.clicks > 0 ? v.spend / v.clicks : 0;
-        const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
-        const frequency = v.reach > 0 ? v.impressions / v.reach : 0;
-        await supabaseAdmin.from("ad_sets").update({
-          spend: v.spend,
-          reach: v.reach,
-          impressions: v.impressions,
-          clicks: v.clicks,
-          ctr,
-          cpc,
-          cpm,
-          frequency,
-          results: v.results,
-        }).eq("fb_adset_id", fbAdsetId).eq("ad_account_id", account.id);
+      if (agg.size > 0) {
+        const { data: aset } = await supabaseAdmin.from("ad_sets").select("id,fb_adset_id,campaign_id,ad_account_id,name").eq("ad_account_id", account.id);
+        const rollupRows: any[] = [];
+        for (const a of (aset ?? []) as any[]) {
+          const v = agg.get(a.fb_adset_id);
+          if (!v) continue;
+          const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+          const cpc = v.clicks > 0 ? v.spend / v.clicks : 0;
+          const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+          const frequency = v.reach > 0 ? v.impressions / v.reach : 0;
+          rollupRows.push({
+            id: a.id,
+            campaign_id: a.campaign_id,
+            ad_account_id: a.ad_account_id,
+            fb_adset_id: a.fb_adset_id,
+            name: a.name,
+            spend: v.spend, reach: v.reach, impressions: v.impressions, clicks: v.clicks,
+            ctr, cpc, cpm, frequency, results: v.results,
+          });
+        }
+        await bulkUpsert("ad_sets", rollupRows, "fb_adset_id");
       }
-    } else {
-      console.warn(`[syncAdAccount] no ad-set time-series for ${account.account_name ?? actId} — keeping previous snapshots & ad_sets rollup`);
     }
 
-    const activeCampaigns = campaigns.filter((c: any) => c.effective_status === "ACTIVE").length;
-    // Only overwrite account totals when fresh data exists; otherwise keep the
-    // last known good numbers so the dashboard KPIs don't flash to 0.
+    // ------- 7) Account-level totals -------
+    const activeCampaigns = (campaigns as any[]).filter((c) => c.effective_status === "ACTIVE").length;
     const accountUpdate: Record<string, any> = {
       account_name: info.name,
       currency: info.currency,
@@ -391,7 +364,7 @@ export async function syncAdAccount(adAccountId: string) {
       account_status: info.account_status,
       business_name: info.business?.name ?? null,
       active_campaigns: activeCampaigns,
-      last_sync_at: new Date().toISOString(),
+      last_sync_at: nowIso,
       last_sync_status: "success",
       last_sync_error: null,
     };
@@ -401,8 +374,6 @@ export async function syncAdAccount(adAccountId: string) {
       accountUpdate.total_impressions = Number((acctInsights as any).impressions) || 0;
       accountUpdate.total_clicks = Number((acctInsights as any).clicks) || 0;
       accountUpdate.total_results = extractPrimaryResults((acctInsights as any).actions);
-    } else {
-      console.warn(`[syncAdAccount] no account-level insights for ${account.account_name ?? actId} — keeping previous totals`);
     }
     await supabaseAdmin.from("ad_accounts").update(accountUpdate).eq("id", account.id);
   } catch (e) {
@@ -444,21 +415,28 @@ export async function syncAdAccount(adAccountId: string) {
   return { ok: !error, itemsSynced, error, duration_ms: duration };
 }
 
+/** Resolve current request origin (e.g. https://your-app.lovable.app). */
+function getOriginFromRequest(): string {
+  const req = getRequest();
+  return new URL(req.url).origin;
+}
+
+/**
+ * DISPATCH PATTERN — fan out per-account work to /api/public/hooks/sync-account
+ * so each account sync runs in its own Worker invocation.
+ */
 export async function syncAllAccounts() {
   const health = await checkTokenHealth();
   const legacyToken = await getLegacyToken();
 
-  // ✅ FIX: Legacy token invalid হলেও multi-BM connections থাকলে sync চালিয়ে যাও
   if (!health.ok && (health.status === "invalid" || health.status === "missing")) {
     const { count: connCount } = await supabaseAdmin
       .from("meta_connections")
       .select("id", { count: "exact", head: true })
       .eq("is_active", true);
     if ((connCount ?? 0) === 0) {
-      // কোনো multi-BM connection নেই — skip করো
       return { count: 0, results: [], skipped: true, tokenHealth: health };
     }
-    // Multi-BM connections আছে — sync চালিয়ে যাও
   }
 
   const { count: existingCount } = await supabaseAdmin
@@ -467,18 +445,38 @@ export async function syncAllAccounts() {
     .eq("is_active", true);
   const autoImport = existingCount === 0 && legacyToken ? await importVisibleAccountsForSync(legacyToken) : { imported: 0 };
 
-  const { data: accounts } = await supabaseAdmin.from("ad_accounts").select("id,client_id,account_name,fb_account_id").eq("is_active", true);
-  const results: Array<{ id: string; ok: boolean; error?: string | null; account_name?: string | null }> = [];
-  for (const a of accounts ?? []) {
-    try {
-      const r = await syncAdAccount(a.id);
-      results.push({ id: a.id, ok: r.ok, error: r.error, account_name: a.account_name });
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.error(`[syncAllAccounts] threw for account ${a.account_name ?? a.fb_account_id}:`, e);
-      results.push({ id: a.id, ok: false, error: msg, account_name: a.account_name });
+  const { data: accounts } = await supabaseAdmin
+    .from("ad_accounts")
+    .select("id,client_id,account_name,fb_account_id")
+    .eq("is_active", true);
+
+  const origin = getOriginFromRequest();
+  const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
+
+  const settled = await Promise.allSettled(
+    (accounts ?? []).map(async (a) => {
+      const resp = await fetch(`${origin}/api/public/hooks/sync-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": apiKey },
+        body: JSON.stringify({ adAccountId: a.id }),
+      });
+      const text = await resp.text();
+      let body: any = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
+      if (!resp.ok) throw new Error(body?.error ?? `dispatch HTTP ${resp.status}`);
+      return { id: a.id, account_name: a.account_name, ...body };
+    }),
+  );
+
+  const results = settled.map((s, i) => {
+    const a = (accounts ?? [])[i];
+    if (s.status === "fulfilled") {
+      return { id: a.id, ok: s.value?.ok !== false, error: s.value?.error ?? null, account_name: a.account_name };
     }
-  }
+    const msg = (s.reason as Error)?.message ?? "dispatch failed";
+    console.error(`[syncAllAccounts] dispatch failed for ${a.account_name ?? a.fb_account_id}:`, msg);
+    return { id: a.id, ok: false, error: msg, account_name: a.account_name };
+  });
 
   try {
     await evaluateBudgetAlerts();
@@ -537,15 +535,32 @@ export async function syncConnectionAccounts(connectionId: string) {
     .select("id,account_name,fb_account_id")
     .eq("connection_id", connectionId)
     .eq("is_active", true);
-  const results: Array<{ id: string; ok: boolean; error?: string | null; account_name?: string | null }> = [];
-  for (const a of accounts ?? []) {
-    try {
-      const r = await syncAdAccount(a.id);
-      results.push({ id: a.id, ok: r.ok, error: r.error, account_name: a.account_name });
-    } catch (e) {
-      console.error(`[syncConnectionAccounts] threw for ${a.account_name ?? a.fb_account_id}:`, e);
-      results.push({ id: a.id, ok: false, error: (e as Error).message, account_name: a.account_name });
+
+  const origin = getOriginFromRequest();
+  const apiKey = process.env.SUPABASE_PUBLISHABLE_KEY ?? "";
+
+  const settled = await Promise.allSettled(
+    (accounts ?? []).map(async (a) => {
+      const resp = await fetch(`${origin}/api/public/hooks/sync-account`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "apikey": apiKey },
+        body: JSON.stringify({ adAccountId: a.id }),
+      });
+      const text = await resp.text();
+      let body: any = null;
+      try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
+      if (!resp.ok) throw new Error(body?.error ?? `dispatch HTTP ${resp.status}`);
+      return body;
+    }),
+  );
+
+  const results = settled.map((s, i) => {
+    const a = (accounts ?? [])[i];
+    if (s.status === "fulfilled") {
+      return { id: a.id, ok: s.value?.ok !== false, error: s.value?.error ?? null, account_name: a.account_name };
     }
-  }
+    return { id: a.id, ok: false, error: (s.reason as Error)?.message ?? "dispatch failed", account_name: a.account_name };
+  });
+
   return { count: results.length, results };
 }
