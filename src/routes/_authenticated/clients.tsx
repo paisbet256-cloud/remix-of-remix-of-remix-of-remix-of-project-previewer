@@ -23,6 +23,31 @@ function fmtBDT(n: number) {
   return `৳${Math.round(Number(n) || 0).toLocaleString()}`;
 }
 
+/**
+ * Convert an ad-account's native-currency spend into USD.
+ *
+ * Why this exists: `ad_accounts.total_spend` is whatever currency Meta
+ * returns for that account (BDT, USD, EUR, …). Previously the Clients page
+ * summed those raw numbers as if every one was USD, so a BDT account with
+ * spend = 12,000 would be treated as $12,000 instead of ~$110 — making
+ * "Remaining Balance" wildly negative or, when the deposit lived in BDT,
+ * making "Total Spent" look like $0 next to it. We now normalise to USD
+ * using the client's stored `bdt_rate` (BDT per 1 USD).
+ */
+function accountSpendToUsd(spend: number, currency: string | null | undefined, bdtRate: number): number {
+  if (!Number.isFinite(spend) || spend === 0) return 0;
+  const ccy = (currency || "USD").toUpperCase();
+  if (ccy === "USD") return spend;
+  if (ccy === "BDT") {
+    // Need a positive rate, otherwise we'd divide by zero and produce Infinity.
+    if (bdtRate > 0) return spend / bdtRate;
+    return 0;
+  }
+  // Unknown currency — fall back to treating it as USD rather than silently
+  // dropping the value (keeps the user's attention on a misconfigured acct).
+  return spend;
+}
+
 function ClientsPage() {
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -135,10 +160,22 @@ function ClientsPage() {
                 </tr>
               ) : (
                 filtered.map((c: any) => {
-                  const totalSpentUsd = (c.ad_accounts ?? []).reduce((s: number, a: any) => s + (Number(a.total_spend) || 0), 0);
-                  const deposit = Number(c.deposit_amount) || 0;
-                  const remaining = deposit - totalSpentUsd;
-                  const acctCount = c.ad_accounts?.length ?? 0;
+                  // --- Fix #3: Total Spend / Remaining Balance formula ---
+                  // Deposit is stored in USD (deposit_amount). bdt_rate is BDT per 1 USD.
+                  // Each ad account's total_spend is in its OWN currency, so we must
+                  // convert per-account to USD before summing.
+                  const bdtRate = Number(c.bdt_rate) || 0;
+                  const accounts = Array.isArray(c.ad_accounts) ? c.ad_accounts : [];
+
+                  const totalSpentUsd = accounts.reduce((sum: number, a: any) => {
+                    return sum + accountSpendToUsd(Number(a?.total_spend) || 0, a?.currency, bdtRate);
+                  }, 0);
+
+                  const deposit = Number(c.deposit_amount) || 0;       // USD
+                  const remaining = deposit - totalSpentUsd;            // USD
+                  const acctCount = accounts.length;
+                  const showBdt = c.deposit_currency === "BDT" && bdtRate > 0;
+
                   return (
                     <tr key={c.id} className="border-t border-border/40 hover:bg-surface/40">
                       <td className="px-4 py-4"><input type="checkbox" className="rounded" /></td>
@@ -174,9 +211,9 @@ function ClientsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4 text-right">
-                        {c.deposit_currency === "BDT" && c.bdt_rate ? (
+                        {showBdt ? (
                           <>
-                            <div className="font-bold">{fmtBDT(deposit * Number(c.bdt_rate))}</div>
+                            <div className="font-bold">{fmtBDT(deposit * bdtRate)}</div>
                             <div className="text-[11px] text-muted-foreground">{fmtUSD(deposit)}</div>
                           </>
                         ) : (
@@ -184,13 +221,30 @@ function ClientsPage() {
                         )}
                       </td>
                       <td className="px-4 py-4 text-right">
-                        <div className="font-bold">{fmtUSD(totalSpentUsd)}</div>
-                        <div className="text-[11px] text-muted-foreground">{acctCount} ad acct{acctCount !== 1 ? "s" : ""}</div>
+                        {showBdt ? (
+                          <>
+                            <div className="font-bold">{fmtBDT(totalSpentUsd * bdtRate)}</div>
+                            <div className="text-[11px] text-muted-foreground">{fmtUSD(totalSpentUsd)}</div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="font-bold">{fmtUSD(totalSpentUsd)}</div>
+                            <div className="text-[11px] text-muted-foreground">{acctCount} ad acct{acctCount !== 1 ? "s" : ""}</div>
+                          </>
+                        )}
                       </td>
                       <td className="px-4 py-4 text-right">
-                        <div className={`font-bold ${remaining < 0 ? "text-destructive" : "text-emerald-400"}`}>{fmtUSD(remaining)}</div>
-                        {c.deposit_currency === "BDT" && c.bdt_rate && (
-                          <div className="text-[11px] text-muted-foreground">{fmtBDT(remaining * Number(c.bdt_rate))}</div>
+                        {showBdt ? (
+                          <>
+                            <div className={`font-bold ${remaining < 0 ? "text-destructive" : "text-emerald-400"}`}>
+                              {fmtBDT(remaining * bdtRate)}
+                            </div>
+                            <div className="text-[11px] text-muted-foreground">{fmtUSD(remaining)}</div>
+                          </>
+                        ) : (
+                          <div className={`font-bold ${remaining < 0 ? "text-destructive" : "text-emerald-400"}`}>
+                            {fmtUSD(remaining)}
+                          </div>
                         )}
                       </td>
                       <td className="px-4 py-4">
