@@ -584,18 +584,28 @@ const [pendingRange, setPendingRange] = useState<DateRange>("all");
                       </td>
                       <td className="px-3 py-3 text-center tabular-nums">{dailyBudget > 0 ? dcur(dailyBudget) : "—"}</td>
                       <td className="px-3 py-3 text-center text-xs text-muted-foreground">{formatEndDate(endTime)}</td>
-                      <td className="px-3 py-3 text-center font-bold tabular-nums">{dcur(aSpend)}</td>
-                      <td className="px-3 py-3 text-center tabular-nums">{num(aImpr)}</td>
-                      <td className="px-3 py-3 text-center tabular-nums">{num(Number(s.reach) || 0)}</td>
-                      <td className="px-3 py-3 text-center tabular-nums">{Number(s.ctr || 0).toFixed(2)}%</td>
+                      <td className="px-3 py-3 text-center font-bold tabular-nums">
+                        {aSpend > 0 ? dcur(aSpend) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-3 py-3 text-center tabular-nums">
+                        {aImpr > 0 ? num(aImpr) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-3 py-3 text-center tabular-nums">
+                        {Number(s.reach) > 0 ? num(Number(s.reach)) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-3 py-3 text-center tabular-nums">
+                        {aImpr > 0 ? `${Number(s.ctr || 0).toFixed(2)}%` : <span className="text-muted-foreground">—</span>}
+                      </td>
                       <td className="px-3 py-3 text-center tabular-nums">{aImpr > 0 ? `${resultRateAd.toFixed(2)}%` : "—"}</td>
                       <td className="px-3 py-3 text-center">
-                        <div className="font-bold tabular-nums">{num(aResults)}</div>
+                        <div className="font-bold tabular-nums">
+                          {aResults > 0 ? num(aResults) : <span className="text-muted-foreground">—</span>}
+                        </div>
                         {goalLabel && <div className="text-[9px] uppercase tracking-wider text-muted-foreground mt-0.5">{goalLabel}</div>}
                       </td>
                       <td className="px-3 py-3 text-center tabular-nums">{aResults > 0 ? cur(mk(aSpend) / aResults) : "—"}</td>
-                      <td className="px-3 py-3 text-center tabular-nums text-muted-foreground">{cur(0)}</td>
-                      <td className="px-3 py-3 text-center tabular-nums">0.00x</td>
+                      <td className="px-3 py-3 text-center tabular-nums text-muted-foreground">—</td>
+                      <td className="px-3 py-3 text-center tabular-nums text-muted-foreground">—</td>
                       <td className="px-3 py-3 text-center min-w-[110px]">
                         <div className="flex flex-col items-center gap-1">
                           <div className="h-1.5 w-full rounded-full bg-surface overflow-hidden">

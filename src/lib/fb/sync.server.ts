@@ -159,21 +159,26 @@ export async function syncAdAccount(adAccountId: string) {
     }
 
     // Entity tables show MAXIMUM range to match Ads Manager's default.
+    // NOTE: Each of these calls can come back empty if Meta rate-limits the
+    // request (very common at adset/ad level). We must NOT zero out the
+    // existing saved metrics in that case — otherwise a single rate-limited
+    // sync wipes the entire Ad Performance table to zeros until the limit
+    // clears (up to an hour).
     const acctInsights = await fb.getAccountInsights(actId, token, "maximum");
     const campInsights = await fb.getInsights(actId, token, "maximum", "campaign");
     const asInsights = await fb.getInsights(actId, token, "maximum", "adset");
     const adInsights = await fb.getInsights(actId, token, "maximum", "ad");
 
-    // Reset metrics first so entities that fell out of range don't keep stale numbers.
+    // Graceful degradation: only reset metrics at a level if we actually
+    // received fresh insights for that level. If the API returned nothing
+    // (rate-limit, transient error), keep the previously saved numbers.
     const zeroMetrics = {
       spend: 0, reach: 0, impressions: 0, clicks: 0,
       ctr: 0, cpc: 0, cpm: 0, frequency: 0, results: 0,
     };
-    await supabaseAdmin.from("campaigns").update(zeroMetrics).eq("ad_account_id", account.id);
-    await supabaseAdmin.from("ad_sets").update(zeroMetrics).eq("ad_account_id", account.id);
-    await supabaseAdmin.from("ads").update(zeroMetrics).eq("ad_account_id", account.id);
 
     if (campInsights.length > 0) {
+      await supabaseAdmin.from("campaigns").update(zeroMetrics).eq("ad_account_id", account.id);
       for (const row of campInsights as any[]) {
         await supabaseAdmin.from("campaigns").update({
           spend: Number(row.spend) || 0,
@@ -187,8 +192,12 @@ export async function syncAdAccount(adAccountId: string) {
           results: extractPrimaryResults(row.actions, row.optimization_goal),
         }).eq("fb_campaign_id", row.campaign_id).eq("ad_account_id", account.id);
       }
+    } else {
+      console.warn(`[syncAdAccount] no campaign insights returned for ${account.account_name ?? actId} — keeping previous values`);
     }
+
     if (asInsights.length > 0) {
+      await supabaseAdmin.from("ad_sets").update(zeroMetrics).eq("ad_account_id", account.id);
       for (const row of asInsights as any[]) {
         await supabaseAdmin.from("ad_sets").update({
           spend: Number(row.spend) || 0,
@@ -202,8 +211,12 @@ export async function syncAdAccount(adAccountId: string) {
           results: extractPrimaryResults(row.actions, row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id)),
         }).eq("fb_adset_id", row.adset_id).eq("ad_account_id", account.id);
       }
+    } else {
+      console.warn(`[syncAdAccount] no ad-set insights returned for ${account.account_name ?? actId} — keeping previous values`);
     }
+
     if (adInsights.length > 0) {
+      await supabaseAdmin.from("ads").update(zeroMetrics).eq("ad_account_id", account.id);
       for (const row of adInsights as any[]) {
         const goal = row.optimization_goal ?? adSetGoalByFbId.get(row.adset_id);
         await supabaseAdmin.from("ads").update({
@@ -218,21 +231,23 @@ export async function syncAdAccount(adAccountId: string) {
           results: extractPrimaryResults(row.actions, goal),
         }).eq("fb_ad_id", row.ad_id).eq("ad_account_id", account.id);
       }
+    } else {
+      console.warn(`[syncAdAccount] no ad insights returned for ${account.account_name ?? actId} — keeping previous values`);
     }
 
     const snapshotSince = new Date();
     snapshotSince.setUTCDate(snapshotSince.getUTCDate() - 29);
     const snapshotSinceStr = snapshotSince.toISOString().slice(0, 10);
 
-    await supabaseAdmin
-      .from("insights_snapshots")
-      .delete()
-      .eq("ad_account_id", account.id)
-      .eq("level", "account")
-      .gte("date_start", snapshotSinceStr);
-
     const ts = await fb.getTimeSeries(actId, token, "last_30d");
     if (ts.length > 0) {
+      await supabaseAdmin
+        .from("insights_snapshots")
+        .delete()
+        .eq("ad_account_id", account.id)
+        .eq("level", "account")
+        .gte("date_start", snapshotSinceStr);
+
       const tsRows = (ts as any[]).map((r) => ({
         ad_account_id: account.id,
         level: "account" as const,
@@ -250,17 +265,19 @@ export async function syncAdAccount(adAccountId: string) {
         results: extractPrimaryResults(r.actions),
       }));
       await supabaseAdmin.from("insights_snapshots").upsert(tsRows, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
+    } else {
+      console.warn(`[syncAdAccount] no account time-series for ${account.account_name ?? actId} — keeping previous snapshots`);
     }
-
-    await supabaseAdmin
-      .from("insights_snapshots")
-      .delete()
-      .eq("ad_account_id", account.id)
-      .eq("level", "campaign")
-      .gte("date_start", snapshotSinceStr);
 
     const campTs = await fb.getCampaignTimeSeries(actId, token, [], "last_30d");
     if (campTs.length > 0) {
+      await supabaseAdmin
+        .from("insights_snapshots")
+        .delete()
+        .eq("ad_account_id", account.id)
+        .eq("level", "campaign")
+        .gte("date_start", snapshotSinceStr);
+
       const campTsRows = (campTs as any[]).map((r) => ({
         ad_account_id: account.id,
         level: "campaign" as const,
@@ -281,23 +298,29 @@ export async function syncAdAccount(adAccountId: string) {
         const chunk = campTsRows.slice(i, i + 500);
         await supabaseAdmin.from("insights_snapshots").upsert(chunk, { onConflict: "ad_account_id,level,entity_id,date_start,date_stop" });
       }
+    } else {
+      console.warn(`[syncAdAccount] no campaign time-series for ${account.account_name ?? actId} — keeping previous snapshots`);
     }
 
-    // ============ AD SET daily time series (NEW) ============
+    // ============ AD SET daily time series ============
     // Ground-truth per-day adset metrics. The "maximum" preset call earlier in
     // this sync sometimes returns NO row for brand-new ad sets, leaving the
     // ad_sets table at zero. We store daily snapshots here so the portal can
     // aggregate adset metrics from the same source as the top dashboard
     // (no chance of mismatch between top KPIs and the Ad Set table).
-    await supabaseAdmin
-      .from("insights_snapshots")
-      .delete()
-      .eq("ad_account_id", account.id)
-      .eq("level", "adset")
-      .gte("date_start", snapshotSinceStr);
-
+    //
+    // IMPORTANT: only delete existing snapshots if Facebook actually returned
+    // new rows. Otherwise a rate-limited request would wipe the Ad Performance
+    // table to empty until the next successful sync.
     const adsetTs = await fb.getAdSetTimeSeries(actId, token, "last_30d");
     if (adsetTs.length > 0) {
+      await supabaseAdmin
+        .from("insights_snapshots")
+        .delete()
+        .eq("ad_account_id", account.id)
+        .eq("level", "adset")
+        .gte("date_start", snapshotSinceStr);
+
       const adsetTsRows = (adsetTs as any[]).map((r) => ({
         ad_account_id: account.id,
         level: "adset" as const,
@@ -354,25 +377,34 @@ export async function syncAdAccount(adAccountId: string) {
           results: v.results,
         }).eq("fb_adset_id", fbAdsetId).eq("ad_account_id", account.id);
       }
+    } else {
+      console.warn(`[syncAdAccount] no ad-set time-series for ${account.account_name ?? actId} — keeping previous snapshots & ad_sets rollup`);
     }
 
     const activeCampaigns = campaigns.filter((c: any) => c.effective_status === "ACTIVE").length;
-    await supabaseAdmin.from("ad_accounts").update({
+    // Only overwrite account totals when fresh data exists; otherwise keep the
+    // last known good numbers so the dashboard KPIs don't flash to 0.
+    const accountUpdate: Record<string, any> = {
       account_name: info.name,
       currency: info.currency,
       timezone_name: info.timezone_name,
       account_status: info.account_status,
       business_name: info.business?.name ?? null,
-      total_spend: acctInsights ? Number((acctInsights as any).spend) || 0 : 0,
-      total_reach: acctInsights ? Number((acctInsights as any).reach) || 0 : 0,
-      total_impressions: acctInsights ? Number((acctInsights as any).impressions) || 0 : 0,
-      total_clicks: acctInsights ? Number((acctInsights as any).clicks) || 0 : 0,
-      total_results: acctInsights ? extractPrimaryResults((acctInsights as any).actions) : 0,
       active_campaigns: activeCampaigns,
       last_sync_at: new Date().toISOString(),
       last_sync_status: "success",
       last_sync_error: null,
-    }).eq("id", account.id);
+    };
+    if (acctInsights) {
+      accountUpdate.total_spend = Number((acctInsights as any).spend) || 0;
+      accountUpdate.total_reach = Number((acctInsights as any).reach) || 0;
+      accountUpdate.total_impressions = Number((acctInsights as any).impressions) || 0;
+      accountUpdate.total_clicks = Number((acctInsights as any).clicks) || 0;
+      accountUpdate.total_results = extractPrimaryResults((acctInsights as any).actions);
+    } else {
+      console.warn(`[syncAdAccount] no account-level insights for ${account.account_name ?? actId} — keeping previous totals`);
+    }
+    await supabaseAdmin.from("ad_accounts").update(accountUpdate).eq("id", account.id);
   } catch (e) {
     error = e instanceof FbApiError
       ? `[FB ${e.code ?? ""}] ${e.message}${e.fbtrace_id ? ` (trace ${e.fbtrace_id})` : ""}`
